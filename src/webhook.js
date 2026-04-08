@@ -1,209 +1,151 @@
 /**
- * webhook.js — Punto de entrada de todos los mensajes WhatsApp.
+ * webhook.js — Webhook handler para Twilio WhatsApp Sandbox.
  *
- * Flujo:
- *  1. Verificar firma HMAC-SHA256 de 360dialog
- *  2. Extraer número de teléfono y channel_id
- *  3. Cargar config del cliente por channel_id
- *  4. Manejar tipos de mensaje:
- *     - No texto (imagen, audio, sticker) → respuesta informativa
- *     - Texto "borrar mis datos" → flujo LOPD
- *     - Texto normal → Claude
- *  5. Recuperar historial de Supabase
- *  6. Llamar a Claude con historial + mensaje
- *  7. Guardar turno en Supabase
- *  8. Enviar respuesta al usuario vía 360dialog
- *  9. Si handoff: alertar a Kenny
+ * Twilio envía los mensajes como application/x-www-form-urlencoded.
+ * Campos principales:
+ *   Body      → texto del mensaje
+ *   From      → whatsapp:+34600000000
+ *   To        → whatsapp:+14155238886 (número sandbox)
+ *   MediaUrl0 → si el mensaje tiene imagen/audio
+ *
+ * Twilio verifica requests con firma HMAC-SHA1 en el header
+ * X-Twilio-Signature.
  */
 
-import crypto from 'crypto'
-import { getConfigByChannelId } from './config.js'
+import twilio from 'twilio'
+import { getConfigBySlug } from './config.js'
 import { getHistory, saveMessage, deleteUserData } from './supabase.js'
 import { chat } from './claude.js'
-import { alertKenny, send360dialogMessage } from './notify.js'
+import { alertKenny, sendTwilioMessage } from './notify.js'
 
-// Mensajes predefinidos
+// En sandbox Twilio, todos los mensajes van al mismo número.
+// Usamos el slug de cliente definido en SANDBOX_CLIENT_SLUG.
+// Cuando tengas múltiples números reales, esto cambia a routing por número.
+const SANDBOX_CLIENT_SLUG = process.env.SANDBOX_CLIENT_SLUG || 'autana'
+
 const NON_TEXT_MSG =
   'Por aquí solo puedo leer mensajes de texto 📝 ' +
   'Escríbeme tu pregunta y te respondo enseguida.'
-
-const UNKNOWN_CLIENT_MSG =
-  'Lo siento, este servicio no está disponible en este momento. ' +
-  'Inténtalo más tarde.'
 
 const DELETE_CONFIRM_MSG =
   '✅ Listo. He borrado todos tus mensajes guardados. ' +
   'Si necesitas algo más, escríbeme de nuevo.'
 
 const FIRST_MESSAGE_LOPD = (privacyUrl) =>
-  `Hola 👋 Soy un asistente virtual.\n\n` +
-  `Puedo ayudarte con precios, disponibilidad y reservas. ` +
-  `No accedo ni guardo datos de salud.\n\n` +
-  `Más info: ${privacyUrl || 'Política de privacidad disponible en nuestra web'}\n\n` +
+  `Hola 👋 Soy el asistente virtual de Autana.\n\n` +
+  `Puedo ayudarte con información sobre nuestros servicios, precios y reservas.\n\n` +
+  `Más info: ${privacyUrl || 'autana.es/privacidad'}\n\n` +
   `¿En qué puedo ayudarte?`
 
-/**
- * Registra el webhook handler en la instancia de Fastify.
- */
 export function registerWebhook(fastify) {
 
-  // Verification GET (360dialog lo llama al configurar el webhook)
-  fastify.get('/webhook', async (request, reply) => {
-    const token = request.query['hub.verify_token']
-    const challenge = request.query['hub.challenge']
+  // Health check ya registrado en server.js
 
-    if (token === process.env.WEBHOOK_VERIFY_TOKEN) {
-      return reply.send(challenge)
-    }
-    return reply.status(403).send('Forbidden')
-  })
+  fastify.post('/webhook', async (request, reply) => {
 
-  // Mensajes entrantes
-  fastify.post('/webhook', {
-    config: { rawBody: true }, // Fastify necesita el body raw para HMAC
-  }, async (request, reply) => {
-
-    // 1. Verificar firma 360dialog
-    if (!verifySignature(request)) {
-      fastify.log.warn('Webhook: firma inválida — posible request falso')
-      return reply.status(401).send()
+    // 1. Verificar firma de Twilio
+    if (!verifyTwilioSignature(request)) {
+      fastify.log.warn('Webhook: firma Twilio inválida')
+      return reply.status(403).send('Forbidden')
     }
 
-    // 360dialog espera 200 rápido. Procesamos en background.
-    reply.status(200).send()
+    // Twilio espera respuesta rápida (TwiML o 200 vacío)
+    reply.status(200).header('Content-Type', 'text/xml').send('<Response></Response>')
 
-    // 2. Extraer datos del payload de 360dialog
-    const payload = request.body
-    const entry = payload?.entry?.[0]
-    const changes = entry?.changes?.[0]
-    const value = changes?.value
+    // 2. Extraer datos del payload de Twilio
+    const body = request.body
+    const userPhone = body.From?.replace('whatsapp:', '') // → +34600000000
+    const userText = body.Body?.trim()
+    const hasMedia = !!body.MediaUrl0
 
-    if (!value?.messages?.length) return // ping, status update, etc.
+    if (!userPhone) return
 
-    const msg = value.messages[0]
-    const channelId = value.metadata?.phone_number_id
-    const userPhone = msg.from
-
-    // 3. Cargar config del cliente
-    const config = getConfigByChannelId(channelId)
+    // 3. Cargar config del cliente (en sandbox: siempre el mismo slug)
+    const config = getConfigBySlug(SANDBOX_CLIENT_SLUG)
     if (!config) {
-      fastify.log.warn(`Webhook: channel_id desconocido: ${channelId}`)
-      await safeSend(null, userPhone, UNKNOWN_CLIENT_MSG)
+      fastify.log.error(`Config no encontrada para slug: ${SANDBOX_CLIENT_SLUG}`)
+      await safeSend(userPhone, 'Servicio no disponible en este momento.')
       return
     }
 
-    const { client_slug: slug, dialog360_api_key: apiKey } = config
+    const slug = config.client_slug
 
-    // 4. Manejar tipos de mensaje no-texto
-    if (msg.type !== 'text') {
-      await safeSend(apiKey, userPhone, NON_TEXT_MSG)
+    // 4. Mensaje con imagen/audio
+    if (hasMedia || !userText) {
+      await safeSend(userPhone, NON_TEXT_MSG)
       return
     }
 
-    const userText = msg.text?.body?.trim()
-    if (!userText) return
-
-    // 5. Verificar si es el primer mensaje del usuario (LOPD)
+    // 5. Primer mensaje → aviso LOPD
     const history = await getHistory(userPhone, slug)
     const isFirstMessage = history.length === 0
 
     if (isFirstMessage && config.first_message_lopd) {
-      await safeSend(apiKey, userPhone, FIRST_MESSAGE_LOPD(config.privacy_url))
-      // Guardamos el primer mensaje del usuario para que en el próximo turno ya tenga contexto
+      await safeSend(userPhone, FIRST_MESSAGE_LOPD(config.privacy_url))
       await saveMessage(userPhone, slug, 'user', userText)
       return
     }
 
-    // 6. Flujo de supresión LOPD
-    if (userText.toLowerCase() === 'sí, borrar' || userText.toLowerCase() === 'si, borrar') {
-      // Verificar que el turno anterior fue la pregunta de confirmación
+    // 6. Supresión LOPD
+    const lowerText = userText.toLowerCase()
+    if (lowerText === 'sí, borrar' || lowerText === 'si, borrar') {
       const lastMsg = history[history.length - 1]
       if (lastMsg?.role === 'assistant' && lastMsg.content.includes('¿Quieres que borre')) {
         await deleteUserData(userPhone, slug)
-        await safeSend(apiKey, userPhone, DELETE_CONFIRM_MSG)
+        await safeSend(userPhone, DELETE_CONFIRM_MSG)
         return
       }
     }
 
-    // 7. Llamar a Claude
+    // 7. Claude
     let claudeResult
     try {
       claudeResult = await chat(config, history, userText)
     } catch (err) {
-      // Chat tiene su propio error handling, esto es la red de seguridad final
-      fastify.log.error(`Claude error para ${slug}: ${err.message}`)
-      await safeSend(apiKey, userPhone, 'Lo siento, hay un problema técnico. Volvemos enseguida.')
-      await alertKenny({
-        type: 'error',
-        clientSlug: slug,
-        userPhone,
-        message: userText,
-        error: err,
-        dialog360: { apiKey, channelId, kennyPhone: config.handoff_phone },
-      })
+      fastify.log.error(`Claude error: ${err.message}`)
+      await safeSend(userPhone, 'Lo siento, hay un problema técnico. Volvemos enseguida.')
+      await alertKenny({ type: 'error', clientSlug: slug, userPhone, message: userText, error: err })
       return
     }
 
     const { text: botResponse, meta = {} } = claudeResult
 
-    // 8. Guardar ambos lados del turno
+    // 8. Guardar turno
     await saveMessage(userPhone, slug, 'user', userText)
     await saveMessage(userPhone, slug, 'assistant', botResponse, meta)
 
-    // 9. Enviar respuesta al usuario
-    await safeSend(apiKey, userPhone, botResponse)
+    // 9. Responder al usuario
+    await safeSend(userPhone, botResponse)
 
-    // 10. Si el bot decidió escalar, alertar a Kenny
+    // 10. Handoff
     if (meta.endedWithHandoff) {
-      await alertKenny({
-        type: 'handoff',
-        clientSlug: slug,
-        userPhone,
-        message: userText,
-        dialog360: { apiKey, channelId, kennyPhone: config.handoff_phone },
-      })
+      await alertKenny({ type: 'handoff', clientSlug: slug, userPhone, message: userText })
     }
   })
 }
 
-/**
- * Verifica la firma HMAC-SHA256 que envía 360dialog en cada request.
- * Sin esto, cualquiera puede enviar mensajes falsos a nuestro webhook.
- */
-function verifySignature(request) {
-  const secret = process.env.DIALOG360_WEBHOOK_SECRET
-  if (!secret) {
-    // En desarrollo (sin secret configurado), permitimos el paso
+function verifyTwilioSignature(request) {
+  const authToken = process.env.TWILIO_AUTH_TOKEN
+  if (!authToken) {
+    // En desarrollo sin token configurado, permitimos
     if (process.env.NODE_ENV !== 'production') return true
     return false
   }
 
-  const signature = request.headers['x-hub-signature-256']
+  const signature = request.headers['x-twilio-signature']
   if (!signature) return false
 
-  const expected = 'sha256=' + crypto
-    .createHmac('sha256', secret)
-    .update(request.rawBody || JSON.stringify(request.body))
-    .digest('hex')
+  // URL completa que Twilio usó para hacer el POST
+  const url = `https://${request.headers.host}/webhook`
+  const params = request.body || {}
 
-  try {
-    return crypto.timingSafeEqual(
-      Buffer.from(signature),
-      Buffer.from(expected)
-    )
-  } catch {
-    return false
-  }
+  return twilio.validateRequest(authToken, signature, url, params)
 }
 
-/**
- * Envía un mensaje de texto. Si falla, solo loguea — no rompe el flujo.
- */
-async function safeSend(apiKey, to, text) {
-  if (!apiKey || !to || !text) return
+async function safeSend(to, text) {
   try {
-    await send360dialogMessage({ apiKey, to, text })
+    await sendTwilioMessage({ to, text })
   } catch (err) {
-    console.error(`[webhook] safeSend failed to ${to}: ${err.message}`)
+    console.error(`[webhook] safeSend failed: ${err.message}`)
   }
 }

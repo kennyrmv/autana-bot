@@ -4,6 +4,7 @@
 
 import 'dotenv/config'
 import Fastify from 'fastify'
+import formbody from '@fastify/formbody'
 import { registerWebhook } from './webhook.js'
 
 const PORT = parseInt(process.env.PORT || '3000', 10)
@@ -17,27 +18,15 @@ const fastify = Fastify({
   },
 })
 
-// Plugin para acceder al body raw (necesario para verificación HMAC)
-fastify.addContentTypeParser(
-  'application/json',
-  { parseAs: 'string' },
-  (req, body, done) => {
-    req.rawBody = body
-    try {
-      done(null, JSON.parse(body))
-    } catch (err) {
-      done(err)
-    }
-  }
-)
+// Parsear application/x-www-form-urlencoded (formato de Twilio)
+await fastify.register(formbody)
 
-// Health check — Railway lo usa para saber que el server está vivo
+// Health check
 fastify.get('/health', async () => ({ status: 'ok', ts: new Date().toISOString() }))
 
-// Registrar webhook handler
+// Webhook
 registerWebhook(fastify)
 
-// Arrancar
 try {
   await fastify.listen({ port: PORT, host: '0.0.0.0' })
   console.log(`Autana Bot escuchando en puerto ${PORT}`)
