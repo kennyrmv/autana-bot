@@ -1,0 +1,38 @@
+# Autana — configuración del bot de la agencia
+#
+# Este bot responde las consultas de clientes potenciales que
+# contactan el WhatsApp de Autana. Es el caso de estudio #1.
+
+client_slug: "autana"
+business_name: "Autana"
+sector: "agencia-digital"
+
+# 360dialog channel ID — rellenar cuando tengas la cuenta activa
+# Ejemplo: 1234567890
+channel_id: "PENDING_360DIALOG_CHANNEL_ID"
+
+# API key de 360dialog para este canal (secreto en Railway env vars)
+# Variable de entorno: DIALOG360_API_KEY_AUTANA
+dialog360_api_key: "${DIALOG360_API_KEY_AUTANA}"
+
+# Cal.com — Kenny usa Cal para las llamadas de descubrimiento de 15 min
+# Variable de entorno: CAL_API_KEY_AUTANA
+cal_link: "https://cal.com/autana/descubrimiento"
+cal_event_type_id: "PENDING_CAL_EVENT_ID"
+
+# Handoff — a quién alertar cuando el bot necesita escalar
+handoff_phone: "+34600000000"   # número real de Kenny
+handoff_email: "hola@autana.es"
+handoff_triggers:
+  - "hablar con alguien"
+  - "hablar con una persona"
+  - "quiero un presupuesto"
+  - "tengo urgencia"
+
+# LOPD
+first_message_lopd: true
+privacy_url: "https://autana.es/privacidad"
+
+# Configuración del bot
+personality: "profesional, cercano, directo. Español de España. Sin jerga técnica excesiva."
+max_history_turns: 10

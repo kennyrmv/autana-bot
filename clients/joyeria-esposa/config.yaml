@@ -1,0 +1,35 @@
+# Joyería personalizada — configuración del bot
+# Case study #2 de Autana
+#
+# PENDIENTE: Actualizar con datos reales del negocio
+
+client_slug: "joyeria-esposa"
+business_name: "NOMBRE_DEL_NEGOCIO"
+sector: "joyeria-personalizada"
+
+# 360dialog channel ID — rellenar cuando esté activo
+channel_id: "PENDING_360DIALOG_CHANNEL_ID"
+
+# API key 360dialog (env var: DIALOG360_API_KEY_JOYERIA_ESPOSA)
+dialog360_api_key: "${DIALOG360_API_KEY_JOYERIA_ESPOSA}"
+
+# Cal.com — para consultas de personalización
+# (env var: CAL_API_KEY_JOYERIA_ESPOSA)
+cal_link: "PENDING_CAL_LINK"
+cal_event_type_id: "PENDING_CAL_EVENT_ID"
+
+# Handoff
+handoff_phone: "+34600000000"
+handoff_email: "PENDING_EMAIL"
+handoff_triggers:
+  - "hablar con alguien"
+  - "urgente"
+  - "reclamación"
+  - "pedido perdido"
+
+# LOPD — obligatorio antes de que arranquen los ads
+first_message_lopd: true
+privacy_url: "PENDING_PRIVACY_URL"  # publicar antes de los ads
+
+personality: "cercana, creativa, apasionada por la joyería artesanal. Tuteo."
+max_history_turns: 10
