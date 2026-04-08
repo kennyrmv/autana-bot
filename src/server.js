@@ -24,6 +24,22 @@ await fastify.register(formbody)
 // Health check
 fastify.get('/health', async () => ({ status: 'ok', ts: new Date().toISOString() }))
 
+// Diagnóstico — prueba la conexión con Claude API
+fastify.get('/debug/claude', async (request, reply) => {
+  const Anthropic = (await import('@anthropic-ai/sdk')).default
+  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+  try {
+    const r = await client.messages.create({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 20,
+      messages: [{ role: 'user', content: 'Di solo: ok' }]
+    })
+    return { ok: true, response: r.content[0].text, model: r.model }
+  } catch (e) {
+    return reply.status(500).send({ ok: false, error: e.message, status: e.status })
+  }
+})
+
 // Webhook
 registerWebhook(fastify)
 
