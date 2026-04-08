@@ -30,7 +30,7 @@ fastify.get('/debug/claude', async (request, reply) => {
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
   try {
     const r = await client.messages.create({
-      model: 'claude-sonnet-4-6',
+      model: 'claude-3-haiku-20240307',
       max_tokens: 20,
       messages: [{ role: 'user', content: 'Di solo: ok' }]
     })
