@@ -17,7 +17,7 @@ dialog360_api_key: "${DIALOG360_API_KEY_AUTANA}"
 
 # Cal.com — Kenny usa Cal para las llamadas de descubrimiento de 15 min
 # Variable de entorno: CAL_API_KEY_AUTANA
-cal_link: "https://cal.com/autana/descubrimiento"
+cal_link: "https://cal.com/kennymedina"
 cal_event_type_id: "PENDING_CAL_EVENT_ID"
 
 # Stripe — link de pago para cuando el cliente quiere contratar
