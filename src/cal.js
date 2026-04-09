@@ -1,21 +1,16 @@
 /**
- * cal.js — Integración con Cal.com API.
+ * cal.js — Integración con Cal.com API v2.
  *
- * Tools disponibles (se activan por feature flags en config.yaml):
- *
- *   cal_read_slots     → get_available_slots   (ya existía)
- *   cal_create_booking → create_booking        (nuevo)
- *   cal_detect_booking → get_user_booking      (nuevo)
- *   cal_cancel_booking → cancel_booking        (nuevo)
- *
- * Timezone: siempre Europe/Madrid (SMBs en España).
- * start_time en create_booking debe ser un valor ISO exacto
- * devuelto por get_available_slots — nunca texto libre.
+ * Cal.com deprecó v1 (410 Gone). Usamos v2:
+ *   Base: https://api.cal.com/v2
+ *   Auth: Authorization: Bearer {apiKey}
+ *   Header: cal-api-version: 2024-09-04
  */
 
 import { createClient } from '@supabase/supabase-js'
 
-const CAL_API_BASE = 'https://api.cal.com/v1'
+const CAL_API_BASE = 'https://api.cal.com/v2'
+const CAL_API_VERSION = '2024-09-04'
 const TIMEOUT_MS = 5000
 const TIMEZONE = 'Europe/Madrid'
 
@@ -24,31 +19,27 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_KEY
 )
 
-// ─── Fallbacks ────────────────────────────────────────────────────────────────
-
 const FALLBACK_SLOTS = {
   available: false,
   fallback: true,
   message: 'No pude consultar la agenda en este momento.',
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+// ─── Helper fetch ─────────────────────────────────────────────────────────────
 
-function buildUrl(path, apiKey, params = {}) {
-  const url = new URL(`${CAL_API_BASE}${path}`)
-  url.searchParams.set('apiKey', apiKey)
-  for (const [k, v] of Object.entries(params)) {
-    url.searchParams.set(k, v)
-  }
-  return url.toString()
-}
-
-async function calFetch(url, options = {}) {
+async function calFetch(apiKey, path, options = {}) {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS)
+
+  const url = `${CAL_API_BASE}${path}`
+
   try {
     const res = await fetch(url, {
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'cal-api-version': CAL_API_VERSION,
+        'Content-Type': 'application/json',
+      },
       signal: controller.signal,
       ...options,
     })
@@ -62,49 +53,49 @@ async function calFetch(url, options = {}) {
 
 // ─── get_available_slots ──────────────────────────────────────────────────────
 
-/**
- * Devuelve los próximos slots disponibles formateados para Claude.
- * También devuelve raw ISO strings para que create_booking los use directamente.
- */
 export async function getAvailableSlots(apiKey, eventTypeId, daysAhead = 7) {
   if (!apiKey || !eventTypeId) return FALLBACK_SLOTS
 
   const startTime = new Date().toISOString()
   const endTime = new Date(Date.now() + daysAhead * 86400000).toISOString()
 
-  const url = buildUrl('/slots', apiKey, { eventTypeId, startTime, endTime })
+  const params = new URLSearchParams({
+    eventTypeId,
+    start: startTime,
+    end: endTime,
+    timeZone: TIMEZONE,
+  })
 
   try {
-    const res = await calFetch(url)
+    const res = await calFetch(apiKey, `/slots/available?${params}`)
+
     if (!res.ok) {
-      console.error(`[cal] get_available_slots error: ${res.status}`)
+      const body = await res.text()
+      console.error(`[cal] get_available_slots error: ${res.status} ${body}`)
       return FALLBACK_SLOTS
     }
 
     const data = await res.json()
-    const slots = data.slots || {}
+    const slots = data.data?.slots || {}
 
     const formatted = []
-    const rawSlots = [] // ISO strings exactos para create_booking
+    const rawSlots = []
 
     for (const [date, daySlots] of Object.entries(slots).slice(0, 4)) {
       const times = daySlots.slice(0, 4).map(s => {
-        rawSlots.push(s.time) // guardamos el ISO exacto
+        rawSlots.push(s.time)
         const d = new Date(s.time)
         return {
           iso: s.time,
-          display: d.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' }),
+          display: d.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit', timeZone: TIMEZONE }),
         }
       })
 
       if (times.length > 0) {
         const dateStr = new Date(date).toLocaleDateString('es-ES', {
-          weekday: 'long', day: 'numeric', month: 'long',
+          weekday: 'long', day: 'numeric', month: 'long', timeZone: TIMEZONE,
         })
-        formatted.push({
-          date: dateStr,
-          slots: times,
-        })
+        formatted.push({ date: dateStr, slots: times })
       }
     }
 
@@ -125,42 +116,31 @@ export async function getAvailableSlots(apiKey, eventTypeId, daysAhead = 7) {
 
 // ─── create_booking ───────────────────────────────────────────────────────────
 
-/**
- * Crea una cita en Cal.com y guarda el booking_uid en Supabase.
- * start_time debe ser un ISO string exacto de get_available_slots.
- */
 export async function createBooking({ apiKey, eventTypeId, phone, clientSlug, name, email, startTime }) {
   if (!apiKey || !eventTypeId) {
     return { success: false, error: 'Cal no configurado para este cliente.' }
   }
 
-  const url = buildUrl('/bookings', apiKey)
-
   const body = {
-    eventTypeId: Number(eventTypeId),
     start: startTime,
-    timeZone: TIMEZONE,
-    responses: {
+    eventTypeId: Number(eventTypeId),
+    attendee: {
       name,
       email,
-      location: { optionValue: '', value: 'inPerson' },
+      timeZone: TIMEZONE,
+      language: 'es',
     },
     metadata: { source: 'autana-bot' },
-    language: 'es',
   }
 
   try {
-    const res = await calFetch(url, {
+    const res = await calFetch(apiKey, '/bookings', {
       method: 'POST',
       body: JSON.stringify(body),
     })
 
     if (res.status === 409) {
-      return {
-        success: false,
-        conflict: true,
-        error: 'Ese horario acaba de ocuparse. Elige otro.',
-      }
+      return { success: false, conflict: true, error: 'Ese horario acaba de ocuparse. Elige otro.' }
     }
 
     if (!res.ok) {
@@ -170,7 +150,7 @@ export async function createBooking({ apiKey, eventTypeId, phone, clientSlug, na
     }
 
     const data = await res.json()
-    const bookingUid = data.uid
+    const bookingUid = data.data?.uid || data.uid
 
     // Guardar en Supabase para detección futura
     const { error: dbErr } = await supabase.from('bookings').insert({
@@ -183,16 +163,9 @@ export async function createBooking({ apiKey, eventTypeId, phone, clientSlug, na
 
     if (dbErr) {
       console.error(`[cal] create_booking supabase error: ${dbErr.message}`)
-      // No fallamos — la cita está creada en Cal aunque no se guardara en Supabase
     }
 
-    return {
-      success: true,
-      bookingUid,
-      startTime,
-      attendeeName: name,
-      attendeeEmail: email,
-    }
+    return { success: true, bookingUid, startTime, attendeeName: name, attendeeEmail: email }
   } catch (err) {
     console.error(`[cal] create_booking error: ${err.message}`)
     return { success: false, error: 'Error técnico al crear la cita.' }
@@ -201,13 +174,7 @@ export async function createBooking({ apiKey, eventTypeId, phone, clientSlug, na
 
 // ─── get_user_booking ─────────────────────────────────────────────────────────
 
-/**
- * Busca si el usuario (phone) tiene cita activa.
- * Primero busca en Supabase. Si hay UID, verifica estado real en Cal.
- * Si no hay UID en Supabase (reservó directo en Cal), devuelve not_found.
- */
 export async function getUserBooking({ phone, clientSlug }) {
-  // 1. Buscar en Supabase la cita confirmada más próxima
   const { data, error } = await supabase
     .from('bookings')
     .select('*')
@@ -223,9 +190,7 @@ export async function getUserBooking({ phone, clientSlug }) {
     return { found: false, error: 'No pude consultar tus citas en este momento.' }
   }
 
-  if (!data) {
-    return { found: false }
-  }
+  if (!data) return { found: false }
 
   return {
     found: true,
@@ -237,26 +202,19 @@ export async function getUserBooking({ phone, clientSlug }) {
 
 // ─── cancel_booking ───────────────────────────────────────────────────────────
 
-/**
- * Cancela una cita en Cal.com y actualiza estado en Supabase.
- * Si Cal cancela pero Supabase falla, se reconcilia en el próximo get_user_booking.
- */
 export async function cancelBooking({ apiKey, bookingUid, phone, clientSlug }) {
   if (!apiKey) {
     return { success: false, error: 'Cal no configurado para este cliente.' }
   }
 
-  const url = buildUrl(`/bookings/${bookingUid}/cancel`, apiKey)
-
   try {
-    const res = await calFetch(url, { method: 'DELETE' })
+    const res = await calFetch(apiKey, `/bookings/${bookingUid}/cancel`, {
+      method: 'POST',
+      body: JSON.stringify({ cancellationReason: 'Cancelado por el cliente via WhatsApp' }),
+    })
 
     if (res.status === 404) {
-      // Ya estaba cancelada — reconciliamos Supabase
-      await supabase
-        .from('bookings')
-        .update({ status: 'cancelled' })
-        .eq('booking_uid', bookingUid)
+      await supabase.from('bookings').update({ status: 'cancelled' }).eq('booking_uid', bookingUid)
       return { success: true, alreadyCancelled: true }
     }
 
@@ -265,18 +223,12 @@ export async function cancelBooking({ apiKey, bookingUid, phone, clientSlug }) {
       return { success: false, error: 'No pude cancelar la cita. Inténtalo de nuevo.' }
     }
 
-    // Actualizar Supabase
-    const { error: dbErr } = await supabase
+    await supabase
       .from('bookings')
       .update({ status: 'cancelled' })
       .eq('booking_uid', bookingUid)
       .eq('phone', phone)
       .eq('client_slug', clientSlug)
-
-    if (dbErr) {
-      console.error(`[cal] cancel_booking supabase error: ${dbErr.message}`)
-      // No fallamos — la cancelación en Cal fue exitosa
-    }
 
     return { success: true }
   } catch (err) {
@@ -285,7 +237,7 @@ export async function cancelBooking({ apiKey, bookingUid, phone, clientSlug }) {
   }
 }
 
-// ─── Tool definitions para Claude API ────────────────────────────────────────
+// ─── Tool definitions ─────────────────────────────────────────────────────────
 
 export const calToolReadSlots = {
   name: 'get_available_slots',
@@ -296,10 +248,7 @@ export const calToolReadSlots = {
   input_schema: {
     type: 'object',
     properties: {
-      days_ahead: {
-        type: 'number',
-        description: 'Días hacia adelante a consultar (default: 7)',
-      },
+      days_ahead: { type: 'number', description: 'Días hacia adelante a consultar (default: 7)' },
     },
     required: [],
   },
@@ -308,18 +257,15 @@ export const calToolReadSlots = {
 export const calToolCreateBooking = {
   name: 'create_booking',
   description:
-    'Crea una cita en la agenda. Úsala SOLO cuando el usuario haya confirmado explícitamente ' +
-    'el horario exacto Y haya proporcionado su nombre y email. ' +
+    'Crea una cita en la agenda. Úsala SOLO cuando el usuario haya confirmado el horario ' +
+    'Y haya proporcionado su nombre y email. ' +
     'start_time debe ser un ISO string exacto devuelto por get_available_slots.',
   input_schema: {
     type: 'object',
     properties: {
       name: { type: 'string', description: 'Nombre completo del cliente' },
       email: { type: 'string', description: 'Email del cliente para la confirmación' },
-      start_time: {
-        type: 'string',
-        description: 'ISO 8601 exacto del slot elegido (viene de get_available_slots)',
-      },
+      start_time: { type: 'string', description: 'ISO 8601 exacto del slot elegido (viene de get_available_slots)' },
     },
     required: ['name', 'email', 'start_time'],
   },
@@ -330,33 +276,23 @@ export const calToolDetectBooking = {
   description:
     'Comprueba si el usuario ya tiene una cita agendada. ' +
     'Úsala cuando el usuario pregunte por su cita, quiera cancelar, o mencione que ya tiene reserva.',
-  input_schema: {
-    type: 'object',
-    properties: {},
-    required: [],
-  },
+  input_schema: { type: 'object', properties: {}, required: [] },
 }
 
 export const calToolCancelBooking = {
   name: 'cancel_booking',
   description:
     'Cancela la cita activa del usuario. Úsala SOLO después de confirmar con get_user_booking ' +
-    'que tiene una cita y el usuario haya confirmado explícitamente que quiere cancelarla.',
+    'que tiene cita y el usuario haya confirmado explícitamente que quiere cancelarla.',
   input_schema: {
     type: 'object',
     properties: {
-      booking_uid: {
-        type: 'string',
-        description: 'UID de la cita a cancelar (viene de get_user_booking)',
-      },
+      booking_uid: { type: 'string', description: 'UID de la cita a cancelar (viene de get_user_booking)' },
     },
     required: ['booking_uid'],
   },
 }
 
-/**
- * Devuelve el array de tools activas según los feature flags del cliente.
- */
 export function buildCalTools(features = {}) {
   const tools = []
   if (features.cal_read_slots) tools.push(calToolReadSlots)
