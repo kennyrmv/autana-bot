@@ -17,8 +17,8 @@ dialog360_api_key: "${DIALOG360_API_KEY_AUTANA}"
 
 # Cal.com — Kenny usa Cal para las llamadas de descubrimiento de 15 min
 # Variable de entorno: CAL_API_KEY_AUTANA
-cal_link: "https://cal.com/kennymedina"
-cal_event_type_id: "PENDING_CAL_EVENT_ID"
+cal_link: "https://cal.com/kennymedina/15min"
+cal_event_type_id: "5299248"
 
 # Stripe — link de pago para cuando el cliente quiere contratar
 # Dejar vacío ("") si no está disponible todavía
@@ -41,6 +41,15 @@ privacy_url: "https://autana.es/privacidad"
 # Opciones: esencial (300 conv/mes) | conversion (800 conv/mes) | custom (null = sin límite)
 plan: "esencial"
 monthly_conversation_limit: 300
+
+# Feature flags — activa solo lo que este cliente tiene contratado
+# Cambiar a true cuando el evento de Cal esté configurado
+features:
+  cal_read_slots: true         # consultar disponibilidad
+  cal_create_booking: true     # crear cita desde WhatsApp
+  cal_detect_booking: true     # detectar si el usuario ya tiene cita
+  cal_cancel_booking: true     # cancelar cita desde WhatsApp
+  stripe_payment: false        # pago antes de confirmar cita (fase 2)
 
 # Configuración del bot
 personality: "profesional, cercano, directo. Español de España. Sin jerga técnica excesiva."

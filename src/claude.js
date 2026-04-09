@@ -3,18 +3,30 @@
  *
  * Nunca devuelve undefined. Si Claude falla, devuelve FALLBACK_MSG.
  * Así el webhook handler siempre tiene algo que enviar al usuario.
+ *
+ * Tools activas se determinan por config.features (piezas de lego):
+ *   cal_read_slots     → get_available_slots
+ *   cal_create_booking → create_booking
+ *   cal_detect_booking → get_user_booking
+ *   cal_cancel_booking → cancel_booking
  */
 
 import Anthropic from '@anthropic-ai/sdk'
 import { readFileSync } from 'fs'
 import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
-import { getAvailableSlots, calTool } from './cal.js'
+import {
+  getAvailableSlots,
+  createBooking,
+  getUserBooking,
+  cancelBooking,
+  buildCalTools,
+} from './cal.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
-const MODEL = 'claude-sonnet-4-6' // velocidad > potencia en conversación
+const MODEL = 'claude-sonnet-4-6'
 const MAX_TOKENS = 1024
 const TIMEOUT_MS = 30000
 
@@ -22,21 +34,14 @@ const FALLBACK_MSG =
   'Ahora mismo no puedo responderte bien. ' +
   'Déjame tu pregunta y te respondo en menos de una hora. Perdona las molestias 🙏'
 
-const RATE_LIMIT_MSG =
-  'Dame un momento... Enseguida te respondo. ⏱️'
+const RATE_LIMIT_MSG = 'Dame un momento... Enseguida te respondo. ⏱️'
 
-// Keywords que activan el derecho de supresión LOPD
 const DELETE_KEYWORDS = ['borrar mis datos', 'eliminar mis datos', 'derecho al olvido']
 
-/**
- * Carga el system prompt de un cliente desde disco.
- * Se cachea en memoria (el archivo solo cambia con deploy).
- */
 const promptCache = new Map()
 
 function loadSystemPrompt(slug) {
   if (promptCache.has(slug)) return promptCache.get(slug)
-
   const promptPath = join(__dirname, '..', 'clients', slug, 'system-prompt.md')
   try {
     const content = readFileSync(promptPath, 'utf8')
@@ -51,13 +56,12 @@ function loadSystemPrompt(slug) {
 /**
  * Envía un mensaje a Claude y devuelve la respuesta en texto.
  *
- * @param {object} config - Config del cliente (de config.js)
- * @param {Array}  history - Historial previo [{role, content}]
+ * @param {object} config      - Config del cliente (de config.js)
+ * @param {Array}  history     - Historial previo [{role, content}]
  * @param {string} userMessage - Mensaje nuevo del usuario
- * @returns {Promise<{text: string, meta: object}>}
+ * @param {string} userPhone   - Teléfono del usuario (para tools de Cal)
  */
-export async function chat(config, history, userMessage) {
-  // Detectar derecho de supresión LOPD
+export async function chat(config, history, userMessage, userPhone) {
   const lowerMsg = userMessage.toLowerCase()
   if (DELETE_KEYWORDS.some(kw => lowerMsg.includes(kw))) {
     return {
@@ -77,20 +81,21 @@ export async function chat(config, history, userMessage) {
     { role: 'user', content: userMessage },
   ]
 
-  // Tools disponibles para este cliente
-  const tools = config.cal_api_key && config.cal_event_type_id ? [calTool] : []
+  // Tools activas según feature flags del cliente
+  const features = config.features || {}
+  const hasCalKey = !!config.cal_api_key
+  const hasEventTypeId = !!config.cal_event_type_id
+  const calReady = hasCalKey && hasEventTypeId
+
+  const tools = calReady ? buildCalTools(features) : []
 
   try {
     const response = await callClaudeWithRetry(systemPrompt, messages, tools)
-    const { text, toolResults } = await processResponse(response, config, messages, systemPrompt, tools)
+    const { text } = await processResponse(response, config, messages, systemPrompt, tools, userPhone)
 
-    // Detectar si el bot decidió escalar a humano
     const endedWithHandoff = text.toLowerCase().includes('[handoff]')
-    const cleanText = text.replace('[handoff]', '').trim()
-
-    // Detectar si hay una reserva completada (Claude usa [booking] como señal)
     const endedWithBooking = text.includes('[booking]')
-    const finalText = cleanText.replace('[booking]', '').trim()
+    const finalText = text.replace('[handoff]', '').replace('[booking]', '').trim()
 
     return {
       text: finalText || FALLBACK_MSG,
@@ -102,7 +107,7 @@ export async function chat(config, history, userMessage) {
 }
 
 /**
- * Llama a Claude con retry automático en rate limit (429).
+ * Llama a Claude con retry en rate limit (429).
  */
 async function callClaudeWithRetry(systemPrompt, messages, tools, attempt = 1) {
   const controller = new AbortController()
@@ -120,7 +125,6 @@ async function callClaudeWithRetry(systemPrompt, messages, tools, attempt = 1) {
     return await client.messages.create(params)
   } catch (err) {
     clearTimeout(timer)
-
     if (err.status === 429 && attempt < 3) {
       console.warn(`[claude] Rate limit — reintento ${attempt}/2 en 15s`)
       await sleep(15000)
@@ -133,31 +137,23 @@ async function callClaudeWithRetry(systemPrompt, messages, tools, attempt = 1) {
 }
 
 /**
- * Procesa la respuesta de Claude, incluyendo tool_use (Cal.com).
- * Si Claude llama a get_available_slots, ejecuta la tool e
- * inyecta el resultado para que Claude genere la respuesta final.
+ * Procesa la respuesta de Claude.
+ * Si hay tool_use, ejecuta la tool correspondiente e inyecta el resultado.
+ * Soporta múltiples rondas de tool_use (Claude puede usar varias tools seguidas).
  */
-async function processResponse(response, config, messages, systemPrompt, tools) {
-  if (response.stop_reason !== 'tool_use') {
+async function processResponse(response, config, messages, systemPrompt, tools, userPhone, depth = 0) {
+  // Máximo 5 rondas de tool_use para evitar loops infinitos
+  if (depth > 5 || response.stop_reason !== 'tool_use') {
     return { text: extractText(response) }
   }
 
-  // Claude quiere usar una tool
   const toolUseBlock = response.content.find(b => b.type === 'tool_use')
-  if (!toolUseBlock || toolUseBlock.name !== 'get_available_slots') {
-    return { text: extractText(response) }
-  }
+  if (!toolUseBlock) return { text: extractText(response) }
 
-  console.log(`[claude] Tool use: get_available_slots`)
+  console.log(`[claude] Tool use: ${toolUseBlock.name}`)
 
-  // Ejecutar la tool con timeout propio (3s en cal.js)
-  const slots = await getAvailableSlots(
-    config.cal_api_key,
-    config.cal_event_type_id,
-    toolUseBlock.input?.days_ahead || 7
-  )
+  const toolResult = await executeTool(toolUseBlock, config, userPhone)
 
-  // Inyectar resultado como tool_result y llamar a Claude de nuevo
   const messagesWithTool = [
     ...messages,
     { role: 'assistant', content: response.content },
@@ -166,13 +162,52 @@ async function processResponse(response, config, messages, systemPrompt, tools) 
       content: [{
         type: 'tool_result',
         tool_use_id: toolUseBlock.id,
-        content: JSON.stringify(slots),
+        content: JSON.stringify(toolResult),
       }],
     },
   ]
 
-  const finalResponse = await callClaudeWithRetry(systemPrompt, messagesWithTool, tools)
-  return { text: extractText(finalResponse) }
+  const nextResponse = await callClaudeWithRetry(systemPrompt, messagesWithTool, tools)
+  return processResponse(nextResponse, config, messagesWithTool, systemPrompt, tools, userPhone, depth + 1)
+}
+
+/**
+ * Ejecuta la tool que Claude pidió y devuelve el resultado.
+ */
+async function executeTool(toolUseBlock, config, userPhone) {
+  const { name, input } = toolUseBlock
+  const { cal_api_key: apiKey, cal_event_type_id: eventTypeId, client_slug: clientSlug } = config
+
+  switch (name) {
+    case 'get_available_slots':
+      return getAvailableSlots(apiKey, eventTypeId, input?.days_ahead || 7)
+
+    case 'create_booking':
+      return createBooking({
+        apiKey,
+        eventTypeId,
+        phone: userPhone,
+        clientSlug,
+        name: input.name,
+        email: input.email,
+        startTime: input.start_time,
+      })
+
+    case 'get_user_booking':
+      return getUserBooking({ phone: userPhone, clientSlug })
+
+    case 'cancel_booking':
+      return cancelBooking({
+        apiKey,
+        bookingUid: input.booking_uid,
+        phone: userPhone,
+        clientSlug,
+      })
+
+    default:
+      console.warn(`[claude] Tool desconocida: ${name}`)
+      return { error: `Tool desconocida: ${name}` }
+  }
 }
 
 function extractText(response) {
@@ -195,15 +230,14 @@ function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms))
 }
 
-/**
- * Construye el bloque de integraciones disponibles para el system prompt.
- * Solo incluye lo que está configurado — Claude no alucina lo que no existe.
- */
 function buildIntegrationsBlock(config) {
+  const features = config.features || {}
   const lines = []
 
-  if (config.cal_link) {
-    lines.push(`- **Reservas / llamadas:** Puedes enviar este link directamente al usuario: ${config.cal_link}`)
+  if (features.cal_create_booking) {
+    lines.push('- **Reservas:** Puedes crear citas directamente desde este chat usando las tools disponibles. No necesitas mandar el link — gestiona la reserva aquí.')
+  } else if (config.cal_link) {
+    lines.push(`- **Reservas:** Puedes enviar este link para que el usuario reserve: ${config.cal_link}`)
   }
 
   if (config.stripe_link) {

@@ -135,7 +135,7 @@ export function registerWebhook(fastify) {
     // 8. Claude
     let claudeResult
     try {
-      claudeResult = await chat(config, history, userText)
+      claudeResult = await chat(config, history, userText, userPhone)
     } catch (err) {
       fastify.log.error(`Claude error: ${err.message}`)
       await safeSend(userPhone, 'Lo siento, hay un problema técnico. Volvemos enseguida.')
