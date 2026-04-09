@@ -66,7 +66,8 @@ export async function chat(config, history, userMessage) {
     }
   }
 
-  const systemPrompt = loadSystemPrompt(config.client_slug)
+  const rawPrompt = loadSystemPrompt(config.client_slug)
+  const systemPrompt = rawPrompt.replace(/\{\{cal_link\}\}/g, config.cal_link || '')
 
   const messages = [
     ...history.map(h => ({ role: h.role, content: h.content })),
