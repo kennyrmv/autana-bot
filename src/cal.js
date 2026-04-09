@@ -141,6 +141,8 @@ export async function createBooking({ apiKey, eventTypeId, phone, clientSlug, na
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS)
 
+  console.log(`[cal] create_booking → POST ${CAL_PUBLIC_BASE}/book/event`, JSON.stringify(body))
+
   try {
     const res = await fetch(`${CAL_PUBLIC_BASE}/book/event`, {
       method: 'POST',
