@@ -82,17 +82,21 @@ export async function getAvailableSlots(apiKey, eventTypeId, daysAhead = 7) {
 
     const formatted = []
     const rawSlots = []
+    const minTime = Date.now() + 30 * 60 * 1000 // mínimo 30 min en el futuro
 
     for (const [date, daySlots] of Object.entries(slots).slice(0, 4)) {
-      const times = daySlots.slice(0, 4).map(s => {
-        const iso = s.start || s.time
-        rawSlots.push(iso)
-        const d = new Date(iso)
-        return {
-          iso,
-          display: d.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit', timeZone: TIMEZONE }),
-        }
-      })
+      const times = daySlots
+        .filter(s => new Date(s.start || s.time).getTime() > minTime)
+        .slice(0, 4)
+        .map(s => {
+          const iso = s.start || s.time
+          rawSlots.push(iso)
+          const d = new Date(iso)
+          return {
+            iso,
+            display: d.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit', timeZone: TIMEZONE }),
+          }
+        })
 
       if (times.length > 0) {
         const dateStr = new Date(date).toLocaleDateString('es-ES', {
