@@ -67,7 +67,7 @@ export async function getAvailableSlots(apiKey, eventTypeId, daysAhead = 7) {
   })
 
   try {
-    const res = await calFetch(apiKey, `/slots/available?${params}`)
+    const res = await calFetch(apiKey, `/slots?${params}`)
 
     if (!res.ok) {
       const body = await res.text()
@@ -76,7 +76,7 @@ export async function getAvailableSlots(apiKey, eventTypeId, daysAhead = 7) {
     }
 
     const data = await res.json()
-    const slots = data.data?.slots || {}
+    const slots = data.data?.slots || data.slots || {}
 
     const formatted = []
     const rawSlots = []
