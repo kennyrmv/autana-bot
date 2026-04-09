@@ -15,6 +15,7 @@
 import twilio from 'twilio'
 import { getConfigBySlug } from './config.js'
 import { getHistory, saveMessage, deleteUserData } from './supabase.js'
+import { findActiveSession, touchSession, createSession, getMonthlySessionCount } from './sessions.js'
 import { chat } from './claude.js'
 import { alertKenny, sendTwilioMessage } from './notify.js'
 
@@ -76,7 +77,40 @@ export function registerWebhook(fastify) {
       return
     }
 
-    // 5. Primer mensaje → aviso LOPD
+    // 5. Control de sesión y límite de conversaciones del plan
+    const activeSession = await findActiveSession(userPhone, slug)
+
+    if (activeSession) {
+      // Sesión en curso: actualizar actividad
+      await touchSession(activeSession.id)
+    } else {
+      // Nueva sesión: verificar límite mensual antes de crearla
+      const limit = config.monthly_conversation_limit ?? null
+
+      if (limit !== null) {
+        const count = await getMonthlySessionCount(slug)
+
+        if (count !== null && count >= limit) {
+          // Límite alcanzado — bloquear
+          fastify.log.warn(`[webhook] Límite alcanzado: ${slug} (${count}/${limit})`)
+          await safeSend(
+            userPhone,
+            'Lo siento, este asistente no está disponible en este momento. Por favor, contacta directamente con el negocio.'
+          )
+          await alertKenny({ type: 'limit_reached', clientSlug: slug, count, limit })
+          return
+        }
+
+        // Alerta al cruzar el 80%
+        if (count !== null && count === Math.floor(limit * 0.8)) {
+          await alertKenny({ type: 'limit_warning', clientSlug: slug, count: count + 1, limit })
+        }
+      }
+
+      await createSession(userPhone, slug)
+    }
+
+    // 6. Primer mensaje → aviso LOPD
     const history = await getHistory(userPhone, slug)
     const isFirstMessage = history.length === 0
 
@@ -86,7 +120,7 @@ export function registerWebhook(fastify) {
       return
     }
 
-    // 6. Supresión LOPD
+    // 7. Supresión LOPD
     const lowerText = userText.toLowerCase()
     if (lowerText === 'sí, borrar' || lowerText === 'si, borrar') {
       const lastMsg = history[history.length - 1]
@@ -97,7 +131,7 @@ export function registerWebhook(fastify) {
       }
     }
 
-    // 7. Claude
+    // 8. Claude
     let claudeResult
     try {
       claudeResult = await chat(config, history, userText)
@@ -110,14 +144,14 @@ export function registerWebhook(fastify) {
 
     const { text: botResponse, meta = {} } = claudeResult
 
-    // 8. Guardar turno
+    // 9. Guardar turno
     await saveMessage(userPhone, slug, 'user', userText)
     await saveMessage(userPhone, slug, 'assistant', botResponse, meta)
 
-    // 9. Responder al usuario
+    // 10. Responder al usuario
     await safeSend(userPhone, botResponse)
 
-    // 10. Handoff
+    // 11. Handoff
     if (meta.endedWithHandoff) {
       await alertKenny({ type: 'handoff', clientSlug: slug, userPhone, message: userText })
     }

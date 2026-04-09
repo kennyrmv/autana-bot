@@ -33,6 +33,11 @@ handoff_triggers:
 first_message_lopd: true
 privacy_url: "https://autana.es/privacidad"
 
+# Plan contratado
+# Opciones: esencial (300 conv/mes) | conversion (800 conv/mes) | custom (null = sin límite)
+plan: "esencial"
+monthly_conversation_limit: 300
+
 # Configuración del bot
 personality: "profesional, cercano, directo. Español de España. Sin jerga técnica excesiva."
 max_history_turns: 10
