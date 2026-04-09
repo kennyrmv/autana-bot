@@ -76,17 +76,19 @@ export async function getAvailableSlots(apiKey, eventTypeId, daysAhead = 7) {
     }
 
     const data = await res.json()
-    const slots = data.data?.slots || data.slots || {}
+    // Cal v2 devuelve: { data: { "2026-04-10": [{start: "..."}], ... }, status: "success" }
+    const slots = data.data || {}
 
     const formatted = []
     const rawSlots = []
 
     for (const [date, daySlots] of Object.entries(slots).slice(0, 4)) {
       const times = daySlots.slice(0, 4).map(s => {
-        rawSlots.push(s.time)
-        const d = new Date(s.time)
+        const iso = s.start || s.time
+        rawSlots.push(iso)
+        const d = new Date(iso)
         return {
-          iso: s.time,
+          iso,
           display: d.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit', timeZone: TIMEZONE }),
         }
       })
