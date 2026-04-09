@@ -67,7 +67,10 @@ export async function chat(config, history, userMessage) {
   }
 
   const rawPrompt = loadSystemPrompt(config.client_slug)
-  const systemPrompt = rawPrompt.replace(/\{\{cal_link\}\}/g, config.cal_link || '')
+  const systemPrompt = rawPrompt
+    .replace(/\{\{cal_link\}\}/g, config.cal_link || '')
+    .replace(/\{\{stripe_link\}\}/g, config.stripe_link || '')
+    .replace(/\{\{integrations\}\}/g, buildIntegrationsBlock(config))
 
   const messages = [
     ...history.map(h => ({ role: h.role, content: h.content })),
@@ -190,6 +193,28 @@ function handleClaudeError(err) {
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms))
+}
+
+/**
+ * Construye el bloque de integraciones disponibles para el system prompt.
+ * Solo incluye lo que está configurado — Claude no alucina lo que no existe.
+ */
+function buildIntegrationsBlock(config) {
+  const lines = []
+
+  if (config.cal_link) {
+    lines.push(`- **Reservas / llamadas:** Puedes enviar este link directamente al usuario: ${config.cal_link}`)
+  }
+
+  if (config.stripe_link) {
+    lines.push(`- **Pago:** Cuando el usuario quiera contratar, envía este link de pago: ${config.stripe_link}`)
+  }
+
+  if (lines.length === 0) {
+    return '- No hay integraciones activas. Si el usuario quiere reservar o contratar, dile que Kenny le contactará directamente.'
+  }
+
+  return lines.join('\n')
 }
 
 export { RATE_LIMIT_MSG, FALLBACK_MSG }

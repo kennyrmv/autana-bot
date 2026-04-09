@@ -20,6 +20,10 @@ dialog360_api_key: "${DIALOG360_API_KEY_AUTANA}"
 cal_link: "https://cal.com/autana/descubrimiento"
 cal_event_type_id: "PENDING_CAL_EVENT_ID"
 
+# Stripe — link de pago para cuando el cliente quiere contratar
+# Dejar vacío ("") si no está disponible todavía
+stripe_link: ""
+
 # Handoff — a quién alertar cuando el bot necesita escalar
 handoff_phone: "+34600000000"   # número real de Kenny
 handoff_email: "hola@autana.es"
