@@ -91,11 +91,12 @@ export function registerWebhook(fastify) {
         const count = await getMonthlySessionCount(slug)
 
         if (count !== null && count >= limit) {
-          // Límite alcanzado — bloquear
+          // Límite alcanzado — respuesta elegante + alerta Kenny para upgrade
           fastify.log.warn(`[webhook] Límite alcanzado: ${slug} (${count}/${limit})`)
+          await createSession(userPhone, slug) // registramos para que Kenny vea quién escribió
           await safeSend(
             userPhone,
-            'Lo siento, este asistente no está disponible en este momento. Por favor, contacta directamente con el negocio.'
+            'Ahora mismo estamos gestionando mucha demanda 🙏 Un miembro de nuestro equipo te atenderá personalmente en breve.'
           )
           await alertKenny({ type: 'limit_reached', clientSlug: slug, count, limit })
           return
