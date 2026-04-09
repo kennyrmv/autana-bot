@@ -10,6 +10,7 @@
 import { createClient } from '@supabase/supabase-js'
 
 const CAL_API_BASE = 'https://api.cal.com/v2'
+const CAL_PUBLIC_BASE = 'https://cal.com/api'
 const CAL_API_VERSION = '2024-09-04'
 const TIMEOUT_MS = 5000
 const TIMEZONE = 'Europe/Madrid'
@@ -119,27 +120,35 @@ export async function getAvailableSlots(apiKey, eventTypeId, daysAhead = 7) {
 // ─── create_booking ───────────────────────────────────────────────────────────
 
 export async function createBooking({ apiKey, eventTypeId, phone, clientSlug, name, email, startTime }) {
-  if (!apiKey || !eventTypeId) {
+  if (!eventTypeId) {
     return { success: false, error: 'Cal no configurado para este cliente.' }
   }
 
+  // Cal.com v2 POST /bookings requiere OAuth. Usamos el endpoint público que funciona con personal API key.
+  // Confirmado funcionando: https://cal.com/api/book/event
+  const endTime = new Date(new Date(startTime).getTime() + 15 * 60 * 1000).toISOString()
+
   const body = {
-    start: startTime,
     eventTypeId: Number(eventTypeId),
-    attendee: {
-      name,
-      email,
-      timeZone: TIMEZONE,
-      language: 'es',
-    },
+    start: startTime,
+    end: endTime,
+    timeZone: TIMEZONE,
+    language: 'es',
     metadata: { source: 'autana-bot' },
+    responses: { name, email },
   }
 
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS)
+
   try {
-    const res = await calFetch(apiKey, '/bookings', {
+    const res = await fetch(`${CAL_PUBLIC_BASE}/book/event`, {
       method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
+      signal: controller.signal,
     })
+    clearTimeout(timer)
 
     if (res.status === 409) {
       return { success: false, conflict: true, error: 'Ese horario acaba de ocuparse. Elige otro.' }
@@ -152,7 +161,7 @@ export async function createBooking({ apiKey, eventTypeId, phone, clientSlug, na
     }
 
     const data = await res.json()
-    const bookingUid = data.data?.uid || data.uid
+    const bookingUid = data.uid || data.data?.uid
 
     // Guardar en Supabase para detección futura
     const { error: dbErr } = await supabase.from('bookings').insert({
@@ -169,7 +178,12 @@ export async function createBooking({ apiKey, eventTypeId, phone, clientSlug, na
 
     return { success: true, bookingUid, startTime, attendeeName: name, attendeeEmail: email }
   } catch (err) {
-    console.error(`[cal] create_booking error: ${err.message}`)
+    clearTimeout(timer)
+    if (err.name === 'AbortError') {
+      console.error('[cal] create_booking timeout')
+    } else {
+      console.error(`[cal] create_booking error: ${err.message}`)
+    }
     return { success: false, error: 'Error técnico al crear la cita.' }
   }
 }
