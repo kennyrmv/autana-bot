@@ -160,8 +160,6 @@ export async function createBooking({ apiKey, eventTypeId, phone, clientSlug, na
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS)
 
-  console.log(`[cal] create_booking → POST ${CAL_PUBLIC_BASE}/book/event`, JSON.stringify(body))
-
   try {
     const res = await fetch(`${CAL_PUBLIC_BASE}/book/event`, {
       method: 'POST',
@@ -199,10 +197,8 @@ export async function createBooking({ apiKey, eventTypeId, phone, clientSlug, na
     }
 
     const rawText = await res.text()
-    console.log(`[cal] create_booking raw response: ${rawText.slice(0, 400)}`)
     const data = JSON.parse(rawText)
     const bookingUid = data.uid || data.data?.uid || data.booking?.uid
-    console.log(`[cal] create_booking uid parsed: ${bookingUid}`)
 
     // Guardar en Supabase para detección futura
     const { error: dbErr } = await supabase.from('bookings').insert({
@@ -215,8 +211,6 @@ export async function createBooking({ apiKey, eventTypeId, phone, clientSlug, na
 
     if (dbErr) {
       console.error(`[cal] create_booking supabase error: ${dbErr.message}`)
-    } else {
-      console.log(`[cal] create_booking guardado en Supabase: phone=${phone} uid=${bookingUid}`)
     }
 
     return { success: true, bookingUid, startTime: resolvedStart, attendeeName: name, attendeeEmail: email }
@@ -234,7 +228,6 @@ export async function createBooking({ apiKey, eventTypeId, phone, clientSlug, na
 // ─── get_user_booking ─────────────────────────────────────────────────────────
 
 export async function getUserBooking({ phone, clientSlug }) {
-  console.log(`[cal] get_user_booking lookup: phone=${phone} client_slug=${clientSlug}`)
   const { data, error } = await supabase
     .from('bookings')
     .select('*')
@@ -250,7 +243,6 @@ export async function getUserBooking({ phone, clientSlug }) {
     return { found: false, error: 'No pude consultar tus citas en este momento.' }
   }
 
-  console.log(`[cal] get_user_booking result: ${data ? `found uid=${data.booking_uid}` : 'not found'}`)
   if (!data) return { found: false }
 
   return {
