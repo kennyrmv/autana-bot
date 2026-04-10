@@ -11,7 +11,8 @@ import { createClient } from '@supabase/supabase-js'
 
 const CAL_API_BASE = 'https://api.cal.com/v2'
 const CAL_PUBLIC_BASE = 'https://cal.com/api'
-const CAL_API_VERSION = '2024-09-04'
+const CAL_API_VERSION = '2024-09-04'        // slots (GET)
+const CAL_CANCEL_VERSION = '2024-08-13'     // cancel — 2024-09-04 da 404 en este endpoint
 const TIMEOUT_MS = 10000
 const TIMEZONE = 'Europe/Madrid'
 
@@ -267,19 +268,21 @@ export async function cancelBooking({ apiKey, bookingUid, phone, clientSlug }) {
     return { success: false, error: 'Cal no configurado para este cliente.' }
   }
 
-  // Cal v2 /bookings/{uid}/cancel requiere OAuth — usamos el endpoint público igual que book/event
+  // Cal v2 POST /bookings/{uid}/cancel funciona con cal-api-version: 2024-08-13
+  // (2024-09-04 da 404 en este endpoint específico — es un quirk de Cal.com)
+  // Auth es opcional — el guard es OptionalApiAuthGuard en el source de Cal.
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS)
 
   try {
-    const res = await fetch(`${CAL_PUBLIC_BASE}/cancel`, {
-      method: 'DELETE',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        uid: bookingUid,
-        cancellationReason: 'Cancelado por el cliente via WhatsApp',
-        allRemainingBookings: false,
-      }),
+    const res = await fetch(`${CAL_API_BASE}/bookings/${bookingUid}/cancel`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'cal-api-version': CAL_CANCEL_VERSION,
+        ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+      },
+      body: JSON.stringify({ cancellationReason: 'Cancelado por el cliente via WhatsApp' }),
       signal: controller.signal,
     })
     clearTimeout(timer)
