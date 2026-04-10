@@ -253,4 +253,4 @@ function buildIntegrationsBlock(config) {
   return lines.join('\n')
 }
 
-export { RATE_LIMIT_MSG, FALLBACK_MSG }
+export { RATE_LIMIT_MSG, FALLBACK_MSG, buildIntegrationsBlock }
