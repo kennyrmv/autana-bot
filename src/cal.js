@@ -265,14 +265,25 @@ export async function cancelBooking({ apiKey, bookingUid, phone, clientSlug }) {
     return { success: false, error: 'Cal no configurado para este cliente.' }
   }
 
+  // Cal v2 /bookings/{uid}/cancel requiere OAuth — usamos el endpoint público igual que book/event
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS)
+
   try {
-    const res = await calFetch(apiKey, `/bookings/${bookingUid}/cancel`, {
-      method: 'POST',
-      body: JSON.stringify({ cancellationReason: 'Cancelado por el cliente via WhatsApp' }),
+    const res = await fetch(`${CAL_PUBLIC_BASE}/cancel`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        uid: bookingUid,
+        cancellationReason: 'Cancelado por el cliente via WhatsApp',
+        allRemainingBookings: false,
+      }),
+      signal: controller.signal,
     })
+    clearTimeout(timer)
 
     const resText = await res.text()
-    console.log(`[cal] cancel_booking status ${res.status}: ${resText}`)
+    console.log(`[cal] cancel_booking status ${res.status}: ${resText.slice(0, 200)}`)
 
     if (!res.ok) {
       return { success: false, error: 'No pude cancelar la cita. Inténtalo de nuevo.' }
@@ -287,7 +298,12 @@ export async function cancelBooking({ apiKey, bookingUid, phone, clientSlug }) {
 
     return { success: true }
   } catch (err) {
-    console.error(`[cal] cancel_booking error: ${err.message}`)
+    clearTimeout(timer)
+    if (err.name === 'AbortError') {
+      console.error('[cal] cancel_booking timeout')
+    } else {
+      console.error(`[cal] cancel_booking error: ${err.message}`)
+    }
     return { success: false, error: 'Error técnico al cancelar la cita.' }
   }
 }
