@@ -22,7 +22,7 @@ cal_event_type_id: "5299248"
 
 # Stripe — link de pago para cuando el cliente quiere contratar
 # Dejar vacío ("") si no está disponible todavía
-stripe_link: ""          # URL del payment link de Stripe — rellenar cuando esté activo
+stripe_link: "https://buy.stripe.com/test_cNi5kF7O66OS4AcfJa9Ve00"          # URL del payment link de Stripe — rellenar cuando esté activo
                          # Variable de entorno opcional: STRIPE_LINK_AUTANA
 
 # Handoff — a quién alertar cuando el bot necesita escalar
@@ -53,7 +53,7 @@ features:
   cal_cancel_booking: true     # cancelar cita desde WhatsApp
 
   # Stripe — pagos
-  stripe_send_link: false      # bot envía link de pago cuando el usuario quiere contratar (fase 1)
+  stripe_send_link: true       # bot envía link de pago cuando el usuario quiere contratar (fase 1)
   stripe_payment: false        # pago requerido antes de confirmar cita (fase 2 — requiere webhook Stripe)
 
 # Configuración del bot
