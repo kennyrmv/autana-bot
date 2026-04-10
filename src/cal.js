@@ -233,6 +233,7 @@ export async function createBooking({ apiKey, eventTypeId, phone, clientSlug, na
 // ─── get_user_booking ─────────────────────────────────────────────────────────
 
 export async function getUserBooking({ phone, clientSlug }) {
+  console.log(`[cal] get_user_booking lookup: phone=${phone} client_slug=${clientSlug}`)
   const { data, error } = await supabase
     .from('bookings')
     .select('*')
@@ -248,6 +249,7 @@ export async function getUserBooking({ phone, clientSlug }) {
     return { found: false, error: 'No pude consultar tus citas en este momento.' }
   }
 
+  console.log(`[cal] get_user_booking result: ${data ? `found uid=${data.booking_uid}` : 'not found'}`)
   if (!data) return { found: false }
 
   return {
