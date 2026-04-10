@@ -182,21 +182,24 @@ export async function createBooking({ apiKey, eventTypeId, phone, clientSlug, na
 
     const data = await res.json()
     const bookingUid = data.uid || data.data?.uid
+    console.log(`[cal] create_booking response uid: ${bookingUid}`, JSON.stringify(data).slice(0, 200))
 
     // Guardar en Supabase para detección futura
     const { error: dbErr } = await supabase.from('bookings').insert({
       phone,
       client_slug: clientSlug,
       booking_uid: bookingUid,
-      start_time: startTime,
+      start_time: resolvedStart,
       status: 'confirmed',
     })
 
     if (dbErr) {
       console.error(`[cal] create_booking supabase error: ${dbErr.message}`)
+    } else {
+      console.log(`[cal] create_booking guardado en Supabase: phone=${phone} uid=${bookingUid}`)
     }
 
-    return { success: true, bookingUid, startTime, attendeeName: name, attendeeEmail: email }
+    return { success: true, bookingUid, startTime: resolvedStart, attendeeName: name, attendeeEmail: email }
   } catch (err) {
     clearTimeout(timer)
     if (err.name === 'AbortError') {
