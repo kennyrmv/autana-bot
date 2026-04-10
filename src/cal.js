@@ -171,6 +171,23 @@ export async function createBooking({ apiKey, eventTypeId, phone, clientSlug, na
     clearTimeout(timer)
 
     if (res.status === 409) {
+      // 409 puede significar: (a) slot ocupado por otro, o (b) este email ya tiene cita.
+      // Buscamos en Supabase para distinguir el caso.
+      const existingBooking = await supabase
+        .from('bookings')
+        .select('*')
+        .eq('phone', phone)
+        .eq('client_slug', clientSlug)
+        .eq('status', 'confirmed')
+        .maybeSingle()
+      if (existingBooking.data) {
+        return {
+          success: false,
+          alreadyBooked: true,
+          error: 'Ya tienes una cita agendada. Si quieres cambiarla, primero cancela la actual.',
+          existingStart: existingBooking.data.start_time,
+        }
+      }
       return { success: false, conflict: true, error: 'Ese horario acaba de ocuparse. Elige otro.' }
     }
 
@@ -180,9 +197,11 @@ export async function createBooking({ apiKey, eventTypeId, phone, clientSlug, na
       return { success: false, error: 'No pude crear la cita. Inténtalo de nuevo.' }
     }
 
-    const data = await res.json()
-    const bookingUid = data.uid || data.data?.uid
-    console.log(`[cal] create_booking response uid: ${bookingUid}`, JSON.stringify(data).slice(0, 200))
+    const rawText = await res.text()
+    console.log(`[cal] create_booking raw response: ${rawText.slice(0, 400)}`)
+    const data = JSON.parse(rawText)
+    const bookingUid = data.uid || data.data?.uid || data.booking?.uid
+    console.log(`[cal] create_booking uid parsed: ${bookingUid}`)
 
     // Guardar en Supabase para detección futura
     const { error: dbErr } = await supabase.from('bookings').insert({
