@@ -12,7 +12,7 @@ import { createClient } from '@supabase/supabase-js'
 const CAL_API_BASE = 'https://api.cal.com/v2'
 const CAL_PUBLIC_BASE = 'https://cal.com/api'
 const CAL_API_VERSION = '2024-09-04'
-const TIMEOUT_MS = 5000
+const TIMEOUT_MS = 10000
 const TIMEZONE = 'Europe/Madrid'
 
 const supabase = createClient(
