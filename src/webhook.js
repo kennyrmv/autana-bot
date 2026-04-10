@@ -162,12 +162,11 @@ export function registerWebhook(fastify) {
 }
 
 function verifyTwilioSignature(request) {
+  // En desarrollo, saltar verificación para facilitar pruebas locales con curl
+  if (process.env.NODE_ENV !== 'production') return true
+
   const authToken = process.env.TWILIO_AUTH_TOKEN
-  if (!authToken) {
-    // En desarrollo sin token configurado, permitimos
-    if (process.env.NODE_ENV !== 'production') return true
-    return false
-  }
+  if (!authToken) return false
 
   const signature = request.headers['x-twilio-signature']
   if (!signature) return false

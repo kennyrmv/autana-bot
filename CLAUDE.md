@@ -47,6 +47,18 @@ Cuando mencione "la landing" o "la web" → trabajar en `/Users/lider/agencia we
 - Incluir límites de conversaciones en el contrato de cliente
 - Migrar de Twilio sandbox a 360dialog cuando vaya live (requiere Meta Business Verification)
 
+## Testing
+
+Framework: vitest. Run: `npm test`
+Test directory: `tests/`
+Setup file: `tests/setup.js` (sets dummy env vars so modules load without real credentials)
+
+See TESTING.md for full conventions. Expectations:
+- When writing a new function, write a test
+- When fixing a bug, write a regression test first
+- When adding a feature flag, test that it gates behavior correctly
+- Never commit code that makes existing tests fail
+
 ## Skill routing
 
 When the user's request matches an available skill, ALWAYS invoke it using the Skill

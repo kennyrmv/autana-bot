@@ -234,14 +234,16 @@ function buildIntegrationsBlock(config) {
   const features = config.features || {}
   const lines = []
 
+  // Cal.com — reservas
   if (features.cal_create_booking) {
-    lines.push('- **Reservas:** Puedes crear citas directamente desde este chat usando las tools disponibles. No necesitas mandar el link — gestiona la reserva aquí.')
+    lines.push('- **Reservas:** Puedes crear citas directamente desde este chat. No mandes links — gestiona la reserva aquí con las tools disponibles.')
   } else if (config.cal_link) {
-    lines.push(`- **Reservas:** Puedes enviar este link para que el usuario reserve: ${config.cal_link}`)
+    lines.push(`- **Reservas:** Cuando el usuario quiera reservar, envía este link: ${config.cal_link}`)
   }
 
-  if (config.stripe_link) {
-    lines.push(`- **Pago:** Cuando el usuario quiera contratar, envía este link de pago: ${config.stripe_link}`)
+  // Stripe — pagos (fase 1: envío de link)
+  if (features.stripe_send_link && config.stripe_link) {
+    lines.push(`- **Pago:** Cuando el usuario quiera contratar un plan, envía este link de pago: ${config.stripe_link} — después de pagar, Kenny le contacta para configurar el bot.`)
   }
 
   if (lines.length === 0) {
@@ -251,4 +253,4 @@ function buildIntegrationsBlock(config) {
   return lines.join('\n')
 }
 
-export { RATE_LIMIT_MSG, FALLBACK_MSG }
+export { RATE_LIMIT_MSG, FALLBACK_MSG, buildIntegrationsBlock }
