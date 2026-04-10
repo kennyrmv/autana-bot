@@ -128,9 +128,21 @@ export async function createBooking({ apiKey, eventTypeId, phone, clientSlug, na
     return { success: false, error: 'Cal no configurado para este cliente.' }
   }
 
+  // Validación defensiva: el start_time debe ser un ISO válido y en el futuro.
+  // Claude a veces reconstruye la fecha en vez de copiarla de get_available_slots.
+  const parsedStart = new Date(startTime)
+  if (isNaN(parsedStart.getTime())) {
+    console.error(`[cal] create_booking: start_time inválido: ${startTime}`)
+    return { success: false, error: 'La fecha del slot no es válida. Usa get_available_slots para obtener los horarios disponibles y copia el campo "iso" exactamente.' }
+  }
+  if (parsedStart.getTime() < Date.now()) {
+    console.error(`[cal] create_booking: start_time en el pasado: ${startTime}`)
+    return { success: false, error: 'Ese horario ya pasó. Usa get_available_slots para ver los próximos horarios disponibles.' }
+  }
+
   // Cal.com v2 POST /bookings requiere OAuth. Usamos el endpoint público que funciona con personal API key.
   // Confirmado funcionando: https://cal.com/api/book/event
-  const endTime = new Date(new Date(startTime).getTime() + 15 * 60 * 1000).toISOString()
+  const endTime = new Date(parsedStart.getTime() + 15 * 60 * 1000).toISOString()
 
   const body = {
     eventTypeId: Number(eventTypeId),
@@ -281,13 +293,20 @@ export const calToolCreateBooking = {
   description:
     'Crea una cita en la agenda. Úsala SOLO cuando el usuario haya confirmado el horario ' +
     'Y haya proporcionado su nombre y email. ' +
-    'start_time debe ser un ISO string exacto devuelto por get_available_slots.',
+    'IMPORTANTE: start_time debe ser COPIADO LITERALMENTE del campo "iso" devuelto por get_available_slots. ' +
+    'Nunca construyas ni reformatees la fecha — copia el string exacto tal como vino, incluyendo la Z final.',
   input_schema: {
     type: 'object',
     properties: {
       name: { type: 'string', description: 'Nombre completo del cliente' },
       email: { type: 'string', description: 'Email del cliente para la confirmación' },
-      start_time: { type: 'string', description: 'ISO 8601 exacto del slot elegido (viene de get_available_slots)' },
+      start_time: {
+        type: 'string',
+        description:
+          'ISO 8601 EXACTO del campo "iso" de get_available_slots. ' +
+          'Ejemplo correcto: "2026-04-11T10:00:00.000Z". ' +
+          'NUNCA reformatees ni reconstruyas esta fecha.',
+      },
     },
     required: ['name', 'email', 'start_time'],
   },
