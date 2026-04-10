@@ -82,7 +82,11 @@ export async function alertKenny({ type, clientSlug, userPhone, message, error, 
     }
   }
 
-  console.error(`[notify] ${type.toUpperCase()} | ${clientSlug} | ${phoneHash} | ${message?.slice(0, 50)}`)
+  if (type === 'error' || type === 'handoff') {
+    console.error(`[notify] ${type.toUpperCase()} | ${clientSlug} | ${phoneHash} | ${message?.slice(0, 50)}`)
+  } else {
+    console.log(`[notify] ${type.toUpperCase()} | ${clientSlug} | ${count}/${limit}`)
+  }
 }
 
 function hashPhone(phone) {

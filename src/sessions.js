@@ -96,7 +96,7 @@ export async function createSession(phone, clientSlug) {
  */
 export async function getMonthlySessionCount(clientSlug) {
   const now = new Date()
-  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString()
+  const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString()
 
   const { count, error } = await supabase
     .from('sessions')

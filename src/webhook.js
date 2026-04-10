@@ -102,8 +102,8 @@ export function registerWebhook(fastify) {
           return
         }
 
-        // Alerta al cruzar el 80%
-        if (count !== null && count === Math.floor(limit * 0.8)) {
+        // Alerta al cruzar el 80% (>= para no saltar si el count sube de golpe)
+        if (count !== null && count >= Math.floor(limit * 0.8)) {
           await alertKenny({ type: 'limit_warning', clientSlug: slug, count: count + 1, limit })
         }
       }
@@ -116,8 +116,10 @@ export function registerWebhook(fastify) {
     const isFirstMessage = history.length === 0
 
     if (isFirstMessage && config.first_message_lopd) {
-      await safeSend(userPhone, FIRST_MESSAGE_LOPD(config.privacy_url))
+      const lopdText = FIRST_MESSAGE_LOPD(config.privacy_url)
+      await safeSend(userPhone, lopdText)
       await saveMessage(userPhone, slug, 'user', userText)
+      await saveMessage(userPhone, slug, 'assistant', lopdText)
       return
     }
 

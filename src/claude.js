@@ -143,7 +143,7 @@ async function callClaudeWithRetry(systemPrompt, messages, tools, attempt = 1) {
  */
 async function processResponse(response, config, messages, systemPrompt, tools, userPhone, depth = 0) {
   // Máximo 5 rondas de tool_use para evitar loops infinitos
-  if (depth > 5 || response.stop_reason !== 'tool_use') {
+  if (depth >= 5 || response.stop_reason !== 'tool_use') {
     return { text: extractText(response) }
   }
 

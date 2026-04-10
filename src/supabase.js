@@ -77,15 +77,17 @@ export async function saveMessage(phone, clientSlug, role, content, meta = {}) {
  * Llamado cuando el usuario escribe "borrar mis datos".
  */
 export async function deleteUserData(phone, clientSlug) {
-  const { error } = await supabase
-    .from('conversations')
-    .delete()
-    .eq('phone', phone)
-    .eq('client_slug', clientSlug)
+  const [convResult, bookingsResult] = await Promise.all([
+    supabase.from('conversations').delete().eq('phone', phone).eq('client_slug', clientSlug),
+    supabase.from('bookings').delete().eq('phone', phone).eq('client_slug', clientSlug),
+  ])
 
-  if (error) {
-    console.error(`[supabase] deleteUserData error: ${error.message}`)
-    return false
+  if (convResult.error) {
+    console.error(`[supabase] deleteUserData conversations error: ${convResult.error.message}`)
   }
-  return true
+  if (bookingsResult.error) {
+    console.error(`[supabase] deleteUserData bookings error: ${bookingsResult.error.message}`)
+  }
+
+  return !convResult.error && !bookingsResult.error
 }

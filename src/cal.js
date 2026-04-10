@@ -200,6 +200,11 @@ export async function createBooking({ apiKey, eventTypeId, phone, clientSlug, na
     const data = JSON.parse(rawText)
     const bookingUid = data.uid || data.data?.uid || data.booking?.uid
 
+    if (!bookingUid) {
+      console.error(`[cal] create_booking: bookingUid no encontrado en respuesta Cal: ${rawText.slice(0, 300)}`)
+      return { success: false, error: 'Cita creada en Cal pero no pudimos guardarla localmente. Contacta con nosotros para confirmar.' }
+    }
+
     // Guardar en Supabase para detección futura
     const { error: dbErr } = await supabase.from('bookings').insert({
       phone,
@@ -260,6 +265,12 @@ export async function cancelBooking({ apiKey, bookingUid, phone, clientSlug }) {
     return { success: false, error: 'Cal no configurado para este cliente.' }
   }
 
+  // Validar que bookingUid tiene forma de UUID antes de interpolarlo en la URL
+  if (!bookingUid || !/^[0-9a-f-]{8,}$/i.test(bookingUid)) {
+    console.error(`[cal] cancel_booking: bookingUid inválido: ${bookingUid}`)
+    return { success: false, error: 'No se encontró la cita a cancelar.' }
+  }
+
   // Cal v2 POST /bookings/{uid}/cancel funciona con cal-api-version: 2024-08-13
   // (2024-09-04 da 404 en este endpoint específico — es un quirk de Cal.com)
   // Auth es opcional — el guard es OptionalApiAuthGuard en el source de Cal.
@@ -286,12 +297,16 @@ export async function cancelBooking({ apiKey, bookingUid, phone, clientSlug }) {
       return { success: false, error: 'No pude cancelar la cita. Inténtalo de nuevo.' }
     }
 
-    await supabase
+    const { error: updateErr } = await supabase
       .from('bookings')
       .update({ status: 'cancelled' })
       .eq('booking_uid', bookingUid)
       .eq('phone', phone)
       .eq('client_slug', clientSlug)
+
+    if (updateErr) {
+      console.error(`[cal] cancel_booking supabase update error: ${updateErr.message}`)
+    }
 
     return { success: true }
   } catch (err) {
