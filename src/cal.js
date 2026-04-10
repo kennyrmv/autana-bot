@@ -142,11 +142,13 @@ export async function createBooking({ apiKey, eventTypeId, phone, clientSlug, na
 
   // Cal.com v2 POST /bookings requiere OAuth. Usamos el endpoint público que funciona con personal API key.
   // Confirmado funcionando: https://cal.com/api/book/event
+  // Normalizar a UTC (Z) — Claude a veces pasa +02:00 en vez de Z
+  const resolvedStart = parsedStart.toISOString()
   const endTime = new Date(parsedStart.getTime() + 15 * 60 * 1000).toISOString()
 
   const body = {
     eventTypeId: Number(eventTypeId),
-    start: startTime,
+    start: resolvedStart,
     end: endTime,
     timeZone: TIMEZONE,
     language: 'es',
