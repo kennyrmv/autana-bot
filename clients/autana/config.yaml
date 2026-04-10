@@ -22,7 +22,8 @@ cal_event_type_id: "5299248"
 
 # Stripe — link de pago para cuando el cliente quiere contratar
 # Dejar vacío ("") si no está disponible todavía
-stripe_link: ""
+stripe_link: ""          # URL del payment link de Stripe — rellenar cuando esté activo
+                         # Variable de entorno opcional: STRIPE_LINK_AUTANA
 
 # Handoff — a quién alertar cuando el bot necesita escalar
 handoff_phone: "+34600000000"   # número real de Kenny
@@ -45,11 +46,15 @@ monthly_conversation_limit: 300
 # Feature flags — activa solo lo que este cliente tiene contratado
 # Cambiar a true cuando el evento de Cal esté configurado
 features:
+  # Cal.com — gestión de citas
   cal_read_slots: true         # consultar disponibilidad
   cal_create_booking: true     # crear cita desde WhatsApp
   cal_detect_booking: true     # detectar si el usuario ya tiene cita
   cal_cancel_booking: true     # cancelar cita desde WhatsApp
-  stripe_payment: false        # pago antes de confirmar cita (fase 2)
+
+  # Stripe — pagos
+  stripe_send_link: false      # bot envía link de pago cuando el usuario quiere contratar (fase 1)
+  stripe_payment: false        # pago requerido antes de confirmar cita (fase 2 — requiere webhook Stripe)
 
 # Configuración del bot
 personality: "profesional, cercano, directo. Español de España. Sin jerga técnica excesiva."

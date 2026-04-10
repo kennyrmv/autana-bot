@@ -41,6 +41,10 @@ function loadClients() {
       const calEnvKey = `CAL_API_KEY_${slug.toUpperCase().replace(/-/g, '_')}`
       config.cal_api_key = process.env[calEnvKey] || null
 
+      // Stripe link — puede estar en YAML (es una URL pública) o sobreescribirse con env var
+      const stripeLinkEnvKey = `STRIPE_LINK_${slug.toUpperCase().replace(/-/g, '_')}`
+      config.stripe_link = process.env[stripeLinkEnvKey] || config.stripe_link || null
+
       byChannelId.set(config.channel_id, config)
       bySlug.set(slug, config)
 
