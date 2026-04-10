@@ -249,13 +249,10 @@ export async function cancelBooking({ apiKey, bookingUid, phone, clientSlug }) {
       body: JSON.stringify({ cancellationReason: 'Cancelado por el cliente via WhatsApp' }),
     })
 
-    if (res.status === 404) {
-      await supabase.from('bookings').update({ status: 'cancelled' }).eq('booking_uid', bookingUid)
-      return { success: true, alreadyCancelled: true }
-    }
+    const resText = await res.text()
+    console.log(`[cal] cancel_booking status ${res.status}: ${resText}`)
 
     if (!res.ok) {
-      console.error(`[cal] cancel_booking error: ${res.status}`)
       return { success: false, error: 'No pude cancelar la cita. Inténtalo de nuevo.' }
     }
 
