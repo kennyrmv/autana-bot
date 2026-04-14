@@ -84,6 +84,22 @@ describe('analyzeHandoff', () => {
     expect(insertMemoryProposal).not.toHaveBeenCalled()
   })
 
+  it('Claude responde "NADA." (con punto) → no inserta', async () => {
+    callClaudeRaw.mockResolvedValue('NADA.')
+
+    await analyzeHandoff(config, history, '¿Cuánto cuesta?')
+
+    expect(insertMemoryProposal).not.toHaveBeenCalled()
+  })
+
+  it('sendKennyProposal lanza → no crash (error absorbido)', async () => {
+    callClaudeRaw.mockResolvedValue('El plan básico cuesta 49€/mes.')
+    sendKennyProposal.mockRejectedValue(new Error('Twilio down'))
+
+    await expect(analyzeHandoff(config, history, '¿Cuánto cuesta?')).resolves.toBeUndefined()
+    expect(insertMemoryProposal).toHaveBeenCalledOnce()
+  })
+
   it('Claude devuelve propuesta → dedup check y luego inserta', async () => {
     callClaudeRaw.mockResolvedValue('El plan básico cuesta 49€/mes.')
 
@@ -117,7 +133,7 @@ describe('analyzeHandoff', () => {
     callClaudeRaw.mockRejectedValue(new Error('timeout'))
 
     await expect(
-      analyzeHandoff(config, history, '¿Cuánto cuesta?').catch(() => {})
+      analyzeHandoff(config, history, '¿Cuánto cuesta?')
     ).resolves.toBeUndefined()
 
     expect(insertMemoryProposal).not.toHaveBeenCalled()
@@ -159,6 +175,16 @@ describe('handleKennyApproval', () => {
     setSystemPromptOverride.mockResolvedValue()
     updateProposalStatus.mockResolvedValue()
     callClaudeRaw.mockResolvedValue('Eres el asistente de Autana.\nEl plan básico cuesta 49€/mes.')
+  })
+
+  it('propuesta ya aprobada → Kenny recibe aviso, no se reaplica', async () => {
+    getProposalByShortId.mockResolvedValue({ ...pendingProposal, status: 'approved' })
+
+    await handleKennyApproval('aprobar', 'a3f7c2')
+
+    expect(setSystemPromptOverride).not.toHaveBeenCalled()
+    const { text } = sendTwilioMessage.mock.calls[0][0]
+    expect(text).toMatch(/ya fue approved/)
   })
 
   it('shortId no encontrado → Kenny recibe mensaje de error', async () => {

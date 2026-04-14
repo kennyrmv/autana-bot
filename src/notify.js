@@ -87,7 +87,7 @@ export async function alertKenny({ type, clientSlug, userPhone, message, error, 
     ].join('\n')
   }
 
-  const kennyPhone = process.env.KENNY_WHATSAPP // tu número: +34600000000
+  const kennyPhone = process.env.KENNY_WHATSAPP
   if (kennyPhone) {
     try {
       await sendTwilioMessage({ to: kennyPhone, text })

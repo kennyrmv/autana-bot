@@ -21,6 +21,7 @@
 import { readFileSync } from 'fs'
 import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
+import { randomUUID } from 'crypto'
 import { callClaudeRaw } from './claude.js'
 import { sendTwilioMessage, sendKennyProposal } from './notify.js'
 import {
@@ -91,7 +92,7 @@ IMPORTANTE: No propongas nada si:
   }
 
   const proposal = rawResponse?.trim()
-  if (!proposal || proposal.toUpperCase() === 'NADA') return
+  if (!proposal || /^nada[.,!?\s]*$/i.test(proposal)) return
 
   // Deduplicación exacta contra las últimas 5 propuestas del slug
   let recentTexts = []
@@ -111,9 +112,6 @@ IMPORTANTE: No propongas nada si:
   }
 
   // Generar short_id: primeros 6 chars del UUID sin guiones
-  // Insertamos y dejamos que Supabase genere el UUID; luego derivamos short_id
-  // Para simplicidad: generamos un UUID aquí con crypto
-  const { randomUUID } = await import('crypto')
   const uuid = randomUUID()
   const shortId = uuid.replace(/-/g, '').slice(0, 6)
 
@@ -129,7 +127,11 @@ IMPORTANTE: No propongas nada si:
     return
   }
 
-  await sendKennyProposal({ clientSlug: slug, proposal, shortId })
+  try {
+    await sendKennyProposal({ clientSlug: slug, proposal, shortId })
+  } catch (err) {
+    console.error(`[memory] analyzeHandoff sendKennyProposal error: ${err.message}`)
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -161,6 +163,11 @@ export async function handleKennyApproval(action, shortId) {
     if (kennyPhone) {
       await safeSendKenny(`❌ No encontré ninguna propuesta con ID ${shortId}. ¿Tienes el ID correcto?`)
     }
+    return
+  }
+
+  if (proposal.status !== 'pending') {
+    await safeSendKenny(`⚠️ La propuesta ${shortId} ya fue ${proposal.status}. No se puede procesar de nuevo.`)
     return
   }
 
@@ -243,6 +250,13 @@ sin markdown extra, sin comentarios. Mismo formato que el original.`
   }
 
   // 3. Sanity check: output no debe crecer más del doble
+  // Guardar si base estaba vacía — cualquier output superaría el check
+  if (!currentContent) {
+    await markError(id, 'system-prompt base vacío — no se puede aplicar sin contenido base')
+    await safeSendKenny(`⚠️ No se encontró system-prompt base para "${slug}". Crea uno en disco o en Supabase antes de aprobar propuestas.`)
+    throw new Error('[memory] applyProposal: currentContent vacío')
+  }
+
   if (newContent.length > currentContent.length * 2) {
     const msg = `⚠️ El system-prompt creció demasiado al integrar la propuesta ${id.slice(0, 8)}. Revisa manualmente.`
     await markError(id, 'output demasiado largo')
