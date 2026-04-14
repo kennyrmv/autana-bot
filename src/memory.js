@@ -276,7 +276,12 @@ sin markdown extra, sin comentarios. Mismo formato que el original.`
   }
 
   // 5. Upsert en system_prompt_overrides
-  await setSystemPromptOverride(slug, newContent)
+  try {
+    await setSystemPromptOverride(slug, newContent)
+  } catch (err) {
+    await markError(id, `Supabase write error: ${err.message}`)
+    throw err
+  }
   console.log(`[memory] applyProposal: override aplicado para ${slug}`)
 }
 

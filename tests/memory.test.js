@@ -256,4 +256,18 @@ describe('handleKennyApproval', () => {
     const { text } = sendTwilioMessage.mock.calls[0][0]
     expect(text).toMatch(/Error/)
   })
+
+  it('setSystemPromptOverride falla → status error, Kenny notificado, no crash', async () => {
+    const originalContent = 'Eres el asistente de Autana. ' + 'X'.repeat(100)
+    getSystemPromptOverride.mockResolvedValue(originalContent)
+    callClaudeRaw.mockResolvedValue(originalContent + '\nEl plan básico cuesta 49€/mes.')
+    setSystemPromptOverride.mockRejectedValue(new Error('connection timeout'))
+
+    await handleKennyApproval('aprobar', 'a3f7c2')
+
+    expect(setSystemPromptOverride).toHaveBeenCalledOnce()
+    expect(updateProposalStatus).toHaveBeenCalledWith('uuid-1234', 'error')
+    const { text } = sendTwilioMessage.mock.calls[0][0]
+    expect(text).toMatch(/No pude aplicar/)
+  })
 })
