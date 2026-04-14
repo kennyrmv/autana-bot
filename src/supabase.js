@@ -91,3 +91,108 @@ export async function deleteUserData(phone, clientSlug) {
 
   return !convResult.error && !bookingsResult.error
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// System prompt overrides — memoria persistente
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Lee el override del system-prompt para un cliente.
+ * Devuelve el contenido como string, o null si no existe override.
+ */
+export async function getSystemPromptOverride(clientSlug) {
+  const { data, error } = await supabase
+    .from('system_prompt_overrides')
+    .select('content')
+    .eq('client_slug', clientSlug)
+    .maybeSingle()
+
+  if (error) throw new Error(`[supabase] getSystemPromptOverride: ${error.message}`)
+  return data?.content ?? null
+}
+
+/**
+ * Guarda (o actualiza) el override del system-prompt para un cliente.
+ */
+export async function setSystemPromptOverride(clientSlug, content) {
+  const { error } = await supabase
+    .from('system_prompt_overrides')
+    .upsert(
+      { client_slug: clientSlug, content, updated_at: new Date().toISOString() },
+      { onConflict: 'client_slug' }
+    )
+
+  if (error) throw new Error(`[supabase] setSystemPromptOverride: ${error.message}`)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Memory proposals — ciclo de aprendizaje supervisado
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Inserta una propuesta de mejora pendiente de aprobación.
+ * Devuelve el row insertado (incluye id y short_id).
+ */
+export async function insertMemoryProposal({ clientSlug, proposal, triggerMessage, shortId }) {
+  const { data, error } = await supabase
+    .from('memory_proposals')
+    .insert({
+      short_id: shortId,
+      client_slug: clientSlug,
+      proposal,
+      trigger_message: triggerMessage,
+      status: 'pending',
+    })
+    .select()
+    .single()
+
+  if (error) throw new Error(`[supabase] insertMemoryProposal: ${error.message}`)
+  return data
+}
+
+/**
+ * Busca una propuesta por su short_id (6 chars hex).
+ * Devuelve el row o null si no existe.
+ */
+export async function getProposalByShortId(shortId) {
+  const { data, error } = await supabase
+    .from('memory_proposals')
+    .select('*')
+    .eq('short_id', shortId)
+    .maybeSingle()
+
+  if (error) throw new Error(`[supabase] getProposalByShortId: ${error.message}`)
+  return data ?? null
+}
+
+/**
+ * Actualiza el estado de una propuesta.
+ * status: 'approved' | 'rejected' | 'error'
+ * extra: campos adicionales opcionales (applied_at, previous_content)
+ */
+export async function updateProposalStatus(id, status, extra = {}) {
+  const { error } = await supabase
+    .from('memory_proposals')
+    .update({ status, ...extra })
+    .eq('id', id)
+
+  if (error) throw new Error(`[supabase] updateProposalStatus: ${error.message}`)
+}
+
+/**
+ * Devuelve los últimos N textos de propuestas para un cliente (para deduplicación).
+ */
+export async function getRecentProposalTexts(clientSlug, limit = 5) {
+  const { data, error } = await supabase
+    .from('memory_proposals')
+    .select('proposal')
+    .eq('client_slug', clientSlug)
+    .order('created_at', { ascending: false })
+    .limit(limit)
+
+  if (error) {
+    console.error(`[supabase] getRecentProposalTexts error: ${error.message}`)
+    return []
+  }
+  return (data || []).map(r => r.proposal)
+}

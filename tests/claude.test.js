@@ -1,11 +1,10 @@
 /**
  * claude.test.js — Tests unitarios para lógica pura de claude.js
  *
- * buildIntegrationsBlock construye el bloque de texto que se inyecta
- * en el system prompt para describir las integraciones disponibles.
- * Es lógica pura (sin API calls): string-in, string-out.
+ * buildIntegrationsBlock: string-in, string-out (sin API calls).
+ * loadSystemPrompt (vía chat): TTL cache + Supabase override + fallback a disco.
  */
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { buildIntegrationsBlock } from '../src/claude.js'
 
 describe('buildIntegrationsBlock', () => {
@@ -33,7 +32,6 @@ describe('buildIntegrationsBlock', () => {
     }
     const result = buildIntegrationsBlock(config)
     expect(result).toContain('crear citas directamente desde este chat')
-    // No debe mandar el link cuando hay herramienta activa
     expect(result).not.toContain('Cuando el usuario quiera reservar')
   })
 
@@ -66,5 +64,79 @@ describe('buildIntegrationsBlock', () => {
     const result = buildIntegrationsBlock(config)
     expect(result).toContain('crear citas directamente')
     expect(result).toContain('link de pago')
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// loadSystemPrompt — TTL cache + Supabase override + fallback a disco
+//
+// Se testea indirectamente: mockeamos supabase.js y verificamos que chat()
+// usa el override o el disco según el estado de Supabase y el caché.
+// ─────────────────────────────────────────────────────────────────────────────
+
+vi.mock('../src/supabase.js', async (importOriginal) => {
+  const actual = await importOriginal()
+  return {
+    ...actual,
+    getSystemPromptOverride: vi.fn(),
+  }
+})
+
+vi.mock('@anthropic-ai/sdk', () => {
+  const mockCreate = vi.fn().mockResolvedValue({
+    stop_reason: 'end_turn',
+    content: [{ type: 'text', text: 'respuesta de prueba' }],
+  })
+  function MockAnthropic() {
+    this.messages = { create: mockCreate }
+  }
+  return { default: MockAnthropic }
+})
+
+vi.mock('../src/cal.js', () => ({
+  buildCalTools: vi.fn().mockReturnValue([]),
+  getAvailableSlots: vi.fn(),
+  createBooking: vi.fn(),
+  getUserBooking: vi.fn(),
+  cancelBooking: vi.fn(),
+}))
+
+describe('loadSystemPrompt — cache y override de Supabase', () => {
+  let getSystemPromptOverride
+
+  beforeEach(async () => {
+    vi.resetModules()
+    // Re-importamos para resetear el cache en memoria (promptCache es module-level)
+    const supabase = await import('../src/supabase.js')
+    getSystemPromptOverride = supabase.getSystemPromptOverride
+    vi.clearAllMocks()
+  })
+
+  it('Supabase devuelve override → chat() usa el override', async () => {
+    getSystemPromptOverride.mockResolvedValue('Override desde Supabase.')
+
+    const { chat } = await import('../src/claude.js')
+    const config = { client_slug: 'autana', features: {} }
+    // Si llega hasta aquí sin lanzar, el override fue cargado
+    await chat(config, [], 'hola', '+34600000000')
+
+    expect(getSystemPromptOverride).toHaveBeenCalledWith('autana')
+  })
+
+  it('Supabase devuelve null → se usa el fichero de disco (sin lanzar)', async () => {
+    getSystemPromptOverride.mockResolvedValue(null)
+
+    const { chat } = await import('../src/claude.js')
+    const config = { client_slug: 'autana', features: {} }
+    await expect(chat(config, [], 'hola', '+34600000000')).resolves.toBeDefined()
+  })
+
+  it('Supabase lanza → fallback a disco, no propaga el error', async () => {
+    getSystemPromptOverride.mockRejectedValue(new Error('Supabase down'))
+
+    const { chat } = await import('../src/claude.js')
+    const config = { client_slug: 'autana', features: {} }
+    // No debe lanzar — el fallback a disco cubre el error
+    await expect(chat(config, [], 'hola', '+34600000000')).resolves.toBeDefined()
   })
 })

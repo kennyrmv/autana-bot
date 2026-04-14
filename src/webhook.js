@@ -18,6 +18,7 @@ import { getHistory, saveMessage, deleteUserData } from './supabase.js'
 import { findActiveSession, touchSession, createSession, getMonthlySessionCount } from './sessions.js'
 import { chat } from './claude.js'
 import { alertKenny, sendTwilioMessage } from './notify.js'
+import { analyzeHandoff, handleKennyApproval } from './memory.js'
 
 // En sandbox Twilio, todos los mensajes van al mismo número.
 // Usamos el slug de cliente definido en SANDBOX_CLIENT_SLUG.
@@ -61,7 +62,14 @@ export function registerWebhook(fastify) {
 
     if (!userPhone) return
 
-    // 3. Cargar config del cliente (en sandbox: siempre el mismo slug)
+    // 3. Guard Kenny — sus mensajes se procesan aparte (aprobación de propuestas)
+    //    Posición: después del 200, antes de cargar config del cliente.
+    if (process.env.KENNY_WHATSAPP && userPhone === process.env.KENNY_WHATSAPP) {
+      handleKennyMessage(body).catch(console.error)
+      return
+    }
+
+    // 4. Cargar config del cliente (en sandbox: siempre el mismo slug)
     const config = getConfigBySlug(SANDBOX_CLIENT_SLUG)
     if (!config) {
       fastify.log.error(`Config no encontrada para slug: ${SANDBOX_CLIENT_SLUG}`)
@@ -71,7 +79,7 @@ export function registerWebhook(fastify) {
 
     const slug = config.client_slug
 
-    // 4. Mensaje con imagen/audio
+    // 5. Mensaje con imagen/audio
     if (hasMedia || !userText) {
       await safeSend(userPhone, NON_TEXT_MSG)
       return
@@ -156,9 +164,36 @@ export function registerWebhook(fastify) {
 
     // 11. Handoff
     if (meta.endedWithHandoff) {
-      await alertKenny({ type: 'handoff', clientSlug: slug, userPhone, message: userText })
+      await alertKenny({ type: 'handoff', clientSlug: slug, userPhone, message: userText, history })
+
+      // Fire-and-forget: analizar el handoff y proponer mejora al system-prompt.
+      // fullHistory incluye el turn actual (el que causó el escalado).
+      const fullHistory = [
+        ...history,
+        { role: 'user', content: userText },
+        { role: 'assistant', content: botResponse },
+      ]
+      analyzeHandoff(config, fullHistory, userText).catch(console.error)
     }
   })
+}
+
+/**
+ * Maneja mensajes entrantes de Kenny (el número en KENNY_WHATSAPP).
+ * Parsea comandos de aprobación/rechazo de propuestas de memoria.
+ *
+ * Formato esperado: "aprobar XXXXXX" o "rechazar XXXXXX"
+ * Cualquier otro texto se ignora silenciosamente.
+ */
+async function handleKennyMessage(body) {
+  const text = body.Body?.trim() || ''
+  const match = text.match(/^(aprobar|rechazar)\s+([a-f0-9]{6})$/i)
+
+  if (!match) return // Kenny puede mandar cualquier cosa sin romper nada
+
+  const action = match[1].toLowerCase()
+  const shortId = match[2].toLowerCase()
+  await handleKennyApproval(action, shortId)
 }
 
 function verifyTwilioSignature(request) {

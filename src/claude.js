@@ -22,6 +22,7 @@ import {
   cancelBooking,
   buildCalTools,
 } from './cal.js'
+import { getSystemPromptOverride } from './supabase.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
@@ -38,15 +39,47 @@ const RATE_LIMIT_MSG = 'Dame un momento... Enseguida te respondo. ⏱️'
 
 const DELETE_KEYWORDS = ['borrar mis datos', 'eliminar mis datos', 'derecho al olvido']
 
+// Cache: Map<slug, { content: string, fetchedAt: number }>
+// TTL de 5 minutos — los cambios aprobados llegan al bot sin reiniciar Railway.
 const promptCache = new Map()
+const PROMPT_CACHE_TTL_MS = 5 * 60 * 1000
 
-function loadSystemPrompt(slug) {
-  if (promptCache.has(slug)) return promptCache.get(slug)
+/**
+ * Carga el system-prompt para un cliente.
+ * Orden de prioridad:
+ *   1. Cache en memoria (TTL 5 min)
+ *   2. Override en Supabase (system_prompt_overrides)
+ *   3. Fichero en disco (clients/{slug}/system-prompt.md)
+ *
+ * Si Supabase falla → fallback a disco (el bot nunca se cae por esto).
+ */
+async function loadSystemPrompt(slug) {
+  const cached = promptCache.get(slug)
+  if (cached && Date.now() - cached.fetchedAt < PROMPT_CACHE_TTL_MS) {
+    return cached.content
+  }
+
+  // Intentar override de Supabase
+  let content = null
+  try {
+    content = await getSystemPromptOverride(slug)
+  } catch (err) {
+    console.error(`[claude] Override fetch failed for "${slug}": ${err.message} — using disk`)
+  }
+
+  // Fallback a disco
+  if (!content) {
+    content = loadFromDisk(slug)
+  }
+
+  promptCache.set(slug, { content, fetchedAt: Date.now() })
+  return content
+}
+
+function loadFromDisk(slug) {
   const promptPath = join(__dirname, '..', 'clients', slug, 'system-prompt.md')
   try {
-    const content = readFileSync(promptPath, 'utf8')
-    promptCache.set(slug, content)
-    return content
+    return readFileSync(promptPath, 'utf8')
   } catch (err) {
     console.error(`[claude] No se encontró system-prompt.md para "${slug}"`)
     return 'Eres un asistente de atención al cliente. Responde de forma amable y concisa.'
@@ -70,7 +103,7 @@ export async function chat(config, history, userMessage, userPhone) {
     }
   }
 
-  const rawPrompt = loadSystemPrompt(config.client_slug)
+  const rawPrompt = await loadSystemPrompt(config.client_slug)
   const systemPrompt = rawPrompt
     .replace(/\{\{cal_link\}\}/g, config.cal_link || '')
     .replace(/\{\{stripe_link\}\}/g, config.stripe_link || '')
@@ -108,15 +141,20 @@ export async function chat(config, history, userMessage, userPhone) {
 
 /**
  * Llama a Claude con retry en rate limit (429).
+ * @param {string}   systemPrompt
+ * @param {Array}    messages
+ * @param {Array}    tools
+ * @param {number}   [attempt=1]
+ * @param {number}   [maxTokens=MAX_TOKENS]
  */
-async function callClaudeWithRetry(systemPrompt, messages, tools, attempt = 1) {
+async function callClaudeWithRetry(systemPrompt, messages, tools, attempt = 1, maxTokens = MAX_TOKENS) {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS)
 
   try {
     const params = {
       model: MODEL,
-      max_tokens: MAX_TOKENS,
+      max_tokens: maxTokens,
       system: systemPrompt,
       messages,
     }
@@ -128,12 +166,32 @@ async function callClaudeWithRetry(systemPrompt, messages, tools, attempt = 1) {
     if (err.status === 429 && attempt < 3) {
       console.warn(`[claude] Rate limit — reintento ${attempt}/2 en 15s`)
       await sleep(15000)
-      return callClaudeWithRetry(systemPrompt, messages, tools, attempt + 1)
+      return callClaudeWithRetry(systemPrompt, messages, tools, attempt + 1, maxTokens)
     }
     throw err
   } finally {
     clearTimeout(timer)
   }
+}
+
+/**
+ * Llamada simple a Claude sin tools ni tool_use.
+ * Para uso interno en memoria persistente (analyzeHandoff, applyProposal).
+ *
+ * @param {string} systemPrompt
+ * @param {string} userContent
+ * @param {number} [maxTokens=1024]  — usar 512 para análisis, 2048 para reescritura de prompt
+ * @returns {Promise<string>}         — texto de la respuesta
+ */
+export async function callClaudeRaw(systemPrompt, userContent, maxTokens = 1024) {
+  const response = await callClaudeWithRetry(
+    systemPrompt,
+    [{ role: 'user', content: userContent }],
+    [],
+    1,
+    maxTokens
+  )
+  return extractText(response)
 }
 
 /**
