@@ -22,9 +22,11 @@ Test pure logic and module behavior in isolation. No network, no real DB.
 
 | File | What it tests |
 |------|--------------|
-| `tests/claude.test.js` | `buildIntegrationsBlock` — Stripe/Cal prompt injection logic |
+| `tests/claude.test.js` | `buildIntegrationsBlock`, `loadSystemPrompt` (Supabase override + TTL cache + disk fallback), `callClaudeRaw` |
 | `tests/config.test.js` | YAML config loading, feature flags, plan limits |
-| `tests/notify.test.js` | `alertKenny` — alert types don't throw without Twilio env |
+| `tests/notify.test.js` | `alertKenny` (all types including enriched handoff with history), `sendKennyProposal` |
+| `tests/memory.test.js` | `analyzeHandoff` (NADA detection, dedup, error absorption), `handleKennyApproval` (approve/reject/double-apply guard/sanity gate) |
+| `tests/webhook.test.js` | Twilio signature verification, Kenny guard routing, regex parsing |
 
 ### Integration / E2E (future)
 
