@@ -62,11 +62,15 @@ export function registerWebhook(fastify) {
 
     if (!userPhone) return
 
-    // 3. Guard Kenny — sus mensajes se procesan aparte (aprobación de propuestas)
-    //    Posición: después del 200, antes de cargar config del cliente.
+    // 3. Guard Kenny — intercepta solo comandos de aprobación ("aprobar/rechazar XXXXXX").
+    //    Mensajes normales de Kenny pasan al flujo normal para que pueda usar el bot.
     if (process.env.KENNY_WHATSAPP && userPhone === process.env.KENNY_WHATSAPP) {
-      handleKennyMessage(body).catch(console.error)
-      return
+      const kennyText = body.Body?.trim() || ''
+      if (/^(aprobar|rechazar)\s+[a-f0-9]{6}$/i.test(kennyText)) {
+        handleKennyMessage(body).catch(console.error)
+        return
+      }
+      // No es un comando → Kenny usa el bot como cualquier usuario
     }
 
     // 4. Cargar config del cliente (en sandbox: siempre el mismo slug)
